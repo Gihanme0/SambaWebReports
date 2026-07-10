@@ -1,0 +1,12 @@
+Stage 2 update applied
+
+1. completeSales.php has been converted to vanzariPerioada.php (Periodic Sales).
+2. completeSales.php is now only a redirect to vanzariPerioada.php.
+3. Header menu now uses Periodic Sales as the complete sales dashboard.
+4. Service Charge and Discount totals now use Calculations.CalculationAmount, not Calculations.Amount.
+   - Amount = percentage/rate.
+   - CalculationAmount = actual money value.
+5. Net After Calc is calculated as: Item Gross Sales + Service Charge - Discount.
+6. Discount card displays positive discount amount using ABS value.
+
+Replace the full project folder with this updated version, then hard refresh the browser with Ctrl + F5.
