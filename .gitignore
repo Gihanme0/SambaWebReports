@@ -4,3 +4,6 @@ config - Copy.php
 .env
 *.log
 New folder/
+
+*.backup*
+*.bak
