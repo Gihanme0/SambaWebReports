@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 if (!isset($reportName)) { $reportName = 'Report'; }
 $currentPage = basename($_SERVER['PHP_SELF'], '.php');
 ?>
@@ -23,5 +23,8 @@ $currentPage = basename($_SERVER['PHP_SELF'], '.php');
         <a class="<?php echo ($currentPage == 'nir') ? 'active' : ''; ?>" href="./nir.php">Purchase History</a>
         <a class="<?php echo ($currentPage == 'consum') ? 'active' : ''; ?>" href="./consum.php">Consumption</a>
         <a class="<?php echo ($currentPage == 'stoc') ? 'active' : ''; ?>" href="./stoc.php">Stock</a>
+        <a class="<?php echo ($currentPage == 'inventoryDaily') ? 'active' : ''; ?>" href="./inventoryDaily.php">Inventory Daily</a>
     </nav>
 </header>
+
+
