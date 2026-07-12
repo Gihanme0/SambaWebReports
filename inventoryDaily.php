@@ -7,6 +7,7 @@ function inv_num($value, $decimals = 3) { return number_format((float)$value, $d
 function inv_money($value) { return 'Rs. ' . number_format((float)$value, 2); }
 function inv_bool($name, $default = false) { return isset($_GET[$name]) ? ($_GET[$name] === '1') : $default; }
 function inv_value($row, $key, $default = 0) { return isset($row[$key]) ? $row[$key] : $default; }
+function inv_date_value($value) { return $value instanceof DateTime ? $value->format('Y-m-d H:i:s') : (string)$value; }
 
 $today = date('Y-m-d');
 $fromInput = isset($_GET['fromDate']) && $_GET['fromDate'] !== '' ? trim($_GET['fromDate']) : $today;
@@ -33,6 +34,7 @@ $lowStockThreshold = isset($_GET['lowStockThreshold']) && $_GET['lowStockThresho
 $errors = array();
 $rows = array();
 $ledgerRows = array();
+$soldRows = array();
 $warehouses = array();
 $items = array();
 $groups = array();
@@ -422,6 +424,49 @@ if ($ledger['error']) {
     $ledgerRows = $ledger['rows'];
 }
 
+$soldSql = "
+DECLARE @StartDate datetime = ?;
+DECLARE @EndDate datetime = ?;
+DECLARE @WarehouseId int = ?;
+DECLARE @ItemId int = ?;
+DECLARE @GroupCode nvarchar(100) = ?;
+DECLARE @Search nvarchar(120) = ?;
+DECLARE @MovementType nvarchar(60) = ?;
+
+SELECT
+    o.MenuItemName,
+    o.PortionName,
+    SUM(CAST(o.Quantity AS decimal(18,3))) AS SoldQty,
+    'Recipe #' + CAST(r.Id AS nvarchar(30)) AS RecipeName,
+    ii.Id AS ItemCode,
+    ii.Name AS IngredientName,
+    ii.BaseUnit AS IngredientUnit,
+    CAST(ri.Quantity AS decimal(18,6)) AS UsagePerItem,
+    CAST(SUM(o.Quantity * ri.Quantity) AS decimal(18,6)) AS TotalIngredientUsage
+FROM Orders o
+JOIN MenuItemPortions mip ON mip.MenuItemId = o.MenuItemId AND mip.Name = o.PortionName
+JOIN Recipes r ON r.Portion_Id = mip.Id
+JOIN RecipeItems ri ON ri.RecipeId = r.Id
+JOIN InventoryItems ii ON ii.Id = ri.InventoryItem_Id
+WHERE o.CreatedDateTime >= @StartDate
+  AND o.CreatedDateTime < @EndDate
+  AND o.DecreaseInventory = 1
+  AND o.CalculatePrice <> 0
+  AND (@WarehouseId IS NULL OR o.WarehouseId = @WarehouseId)
+  AND (@ItemId IS NULL OR ii.Id = @ItemId)
+  AND (@GroupCode IS NULL OR ISNULL(NULLIF(ii.GroupCode,''),'Ungrouped') = @GroupCode)
+  AND (@Search IS NULL OR @Search = '' OR CAST(ii.Id AS nvarchar(20)) LIKE '%' + @Search + '%' OR ii.Name LIKE '%' + @Search + '%' OR o.MenuItemName LIKE '%' + @Search + '%' OR ISNULL(ii.GroupCode,'') LIKE '%' + @Search + '%')
+  AND (@MovementType IS NULL OR @MovementType = 'Recipe Consumption')
+GROUP BY o.MenuItemName, o.PortionName, r.Id, ii.Id, ii.Name, ii.BaseUnit, ri.Quantity
+ORDER BY o.MenuItemName, o.PortionName, ii.Name;
+";
+$sold = inv_fetch_all($conn, $soldSql, array($startDate, $endDate, $warehouseId, $itemId, $groupCode, $search, $movementType));
+if ($sold['error']) {
+    $errors[] = $sold['error'];
+} else {
+    $soldRows = $sold['rows'];
+}
+
 $openingMap = array();
 foreach ($rows as $row) {
     $itemKey = (string)$row['ItemCode'];
@@ -462,6 +507,9 @@ $chartIn = 0;
 $chartOut = 0;
 $chartNegative = 0;
 $chartZero = 0;
+$valueByGroup = array();
+$soldByMenu = array();
+$topSoldMenu = array();
 $topUsage = $rows;
 usort($topUsage, function($a, $b) {
     $au = (float)$a['RecipeUsageQty'] + (float)$a['DirectUsageQty'];
@@ -479,7 +527,53 @@ foreach ($rows as $row) {
     $chartOut += (float)$row['StockOutQty'];
     if ((float)$row['CurrentBalance'] < 0) { $chartNegative++; }
     if ((float)$row['CurrentBalance'] == 0) { $chartZero++; }
+    $groupKey = (string)$row['InventoryGroup'];
+    if (!isset($valueByGroup[$groupKey])) { $valueByGroup[$groupKey] = 0; }
+    $valueByGroup[$groupKey] += (float)$row['CurrentStockValue'];
 }
+$chartHealthy = max(0, $summary['total_items'] - $chartNegative - $chartZero);
+arsort($valueByGroup);
+
+foreach ($soldRows as $soldRow) {
+    $soldKey = $soldRow['MenuItemName'] . ' / ' . $soldRow['PortionName'];
+    if (!isset($soldByMenu[$soldKey])) {
+        $soldByMenu[$soldKey] = array(
+            'menu' => $soldRow['MenuItemName'],
+            'portion' => $soldRow['PortionName'],
+            'sold_qty' => (float)$soldRow['SoldQty'],
+            'usage' => 0,
+            'rows' => array()
+        );
+    }
+    $soldByMenu[$soldKey]['usage'] += (float)$soldRow['TotalIngredientUsage'];
+    $soldByMenu[$soldKey]['rows'][] = $soldRow;
+}
+$topSoldMenu = $soldByMenu;
+uasort($topSoldMenu, function($a, $b) {
+    if ($a['sold_qty'] == $b['sold_qty']) { return 0; }
+    return ($a['sold_qty'] < $b['sold_qty']) ? 1 : -1;
+});
+
+$selectedWarehouseName = '';
+foreach ($warehouses as $w) {
+    if ($warehouseId !== null && (int)$w['Id'] === $warehouseId) { $selectedWarehouseName = $w['Name']; break; }
+}
+$selectedItemName = '';
+foreach ($items as $it) {
+    if ($itemId !== null && (int)$it['Id'] === $itemId) { $selectedItemName = $it['Name']; break; }
+}
+$appliedFilters = array();
+$appliedFilters[] = 'From ' . $fromInput;
+$appliedFilters[] = 'To ' . $toInput;
+if ($selectedWarehouseName !== '') { $appliedFilters[] = 'Warehouse: ' . $selectedWarehouseName; }
+if ($groupCode !== null) { $appliedFilters[] = 'Group: ' . $groupCode; }
+if ($selectedItemName !== '') { $appliedFilters[] = 'Item: ' . $selectedItemName; }
+if ($movementType !== null) { $appliedFilters[] = 'Movement: ' . $movementType; }
+if ($search !== '') { $appliedFilters[] = 'Search: ' . $search; }
+if (!$showZeroBalance) { $appliedFilters[] = 'Hide zero balance'; }
+if (!$showZeroMovement) { $appliedFilters[] = 'Hide zero movement'; }
+if ($showNegativeOnly) { $appliedFilters[] = 'Negative stock only'; }
+if ($showLowStock) { $appliedFilters[] = 'Low stock only'; }
 
 $exportMode = isset($_GET['export']) ? $_GET['export'] : '';
 if ($exportMode === 'excel') {
@@ -513,139 +607,454 @@ if ($exportMode === 'excel') {
     <script type="text/javascript" src="./bootstrap/js/bootstrap.min.js"></script>
     <script type="text/javascript" src="./js/bootstrap-datetimepicker.js" charset="UTF-8"></script>
 <style>
-        .inv-grid{display:grid;grid-template-columns:repeat(6,1fr);gap:14px}.inv-filter .form-control,.inv-filter select{height:42px;border-radius:10px;border:1px solid #d1d5db;box-shadow:none}.inv-filter label{font-size:12px;text-transform:uppercase;color:#475569;font-weight:900;display:block;margin-bottom:6px}.inv-toolbar{display:flex;gap:10px;flex-wrap:wrap}.inv-btn{border:0;border-radius:10px;padding:11px 15px;font-weight:900;color:#fff;text-decoration:none;display:inline-block}.inv-blue{background:#2563eb}.inv-green{background:#16a34a}.inv-red{background:#dc2626}.inv-dark{background:#0f172a}.inv-soft{background:#e2e8f0;color:#0f172a}.inv-kpis{display:grid;grid-template-columns:repeat(6,1fr);gap:14px;margin:18px 0}.inv-kpi{background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:16px;box-shadow:0 12px 30px rgba(15,23,42,.08)}.inv-kpi span{display:block;color:#64748b;font-size:11px;font-weight:900;text-transform:uppercase}.inv-kpi strong{display:block;margin-top:6px;font-size:20px;color:#0f172a}.inv-kpi.warn strong{color:#dc2626}.inv-charts{display:grid;grid-template-columns:1.3fr 1fr 1fr;gap:16px;margin-bottom:18px}.inv-chart{background:#fff;border:1px solid #e5e7eb;border-radius:16px;padding:16px;box-shadow:0 12px 30px rgba(15,23,42,.08);min-height:260px}.inv-chart h3{margin:0 0 12px;font-size:16px;font-weight:900}.inv-badge{display:inline-block;border-radius:999px;padding:5px 9px;font-size:11px;font-weight:900}.inv-bad-neg{background:#fee2e2;color:#991b1b}.inv-bad-zero{background:#f1f5f9;color:#475569}.inv-bad-ok{background:#dcfce7;color:#166534}.inv-ledger{display:none;background:#f8fafc}.inv-ledger.open{display:table-row}.inv-ledger-box{padding:14px}.inv-ledger table{width:100%;font-size:12px}.inv-expand{border:0;border-radius:8px;background:#dbeafe;color:#1e40af;font-weight:900;padding:6px 9px}.inv-mobile-cards{display:none}.inv-health{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}.inv-health div{border-radius:12px;padding:12px;background:#f8fafc;text-align:center}.inv-health strong{display:block;font-size:24px}.inv-lite-bar{margin:12px 0}.inv-lite-label{display:flex;justify-content:space-between;gap:10px;font-size:12px;color:#334155}.inv-lite-track{height:12px;background:#e5e7eb;border-radius:999px;overflow:hidden;margin-top:6px}.inv-lite-track div{height:100%;background:#2563eb;border-radius:999px}.inv-lite-track div.in{background:#16a34a}.inv-lite-track div.out{background:#dc2626}.inv-health-note{color:#64748b;font-weight:800;margin:14px 0 0}.inv-print-title{display:none}@media(max-width:1100px){.inv-grid{grid-template-columns:repeat(3,1fr)}.inv-kpis{grid-template-columns:repeat(3,1fr)}.inv-charts{grid-template-columns:1fr}}@media(max-width:680px){.kx-table-wrap{display:none}.inv-mobile-cards{display:grid;gap:12px}.inv-card{background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:14px;box-shadow:0 10px 24px rgba(15,23,42,.08)}.inv-card h3{margin:0 0 8px;font-size:16px}.inv-card dl{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:0}.inv-card dt{color:#64748b;font-size:11px;text-transform:uppercase}.inv-card dd{margin:0;font-weight:900}.inv-grid,.inv-kpis{grid-template-columns:1fr}.inv-toolbar .inv-btn{width:100%;text-align:center}}@media print{.kx-topbar,.inv-filter,.inv-toolbar,.inv-expand,.inv-charts{display:none!important}.inv-print-title{display:block}.kx-shell{width:100%;margin:0}.kx-table thead th{position:static!important}.kx-table-wrap{overflow:visible}.kx-table{font-size:10px}.kx-table tbody td,.kx-table thead th{padding:7px}.inv-mobile-cards{display:none!important}@page{size:A4 landscape;margin:9mm}}
+        .kx-inventory-page .kx-shell{width:min(1320px,calc(100% - 36px))}
+        .inv-print-title{display:none}
+        .inv-hero-meta{display:grid;gap:7px;text-align:right}
+        .inv-hero-meta span{display:block;color:#bfdbfe;font-size:12px}
+        .inv-hero-meta strong{display:block;color:#fff;font-size:13px}
+        .inv-filter-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;align-items:end}
+        .inv-field label,.inv-checks-title{display:block;font-weight:800;color:#334155;margin-bottom:7px}
+        .inv-field .form-control,.inv-field select{height:44px;border:1px solid #d1d5db;border-radius:12px;box-shadow:none;font-weight:700;color:#111827;background:#fff}
+        .inv-checks{display:grid;grid-template-columns:1fr 1fr;gap:8px;background:#f8fafc;border:1px solid #e5e7eb;border-radius:14px;padding:12px}
+        .inv-checks label{display:flex;align-items:center;gap:7px;margin:0;color:#334155;font-weight:800;font-size:12px}
+        .inv-actions{grid-column:1 / -1;display:flex;gap:10px;flex-wrap:wrap}
+        .inv-chip-row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:15px;padding-top:15px;border-top:1px solid #e5e7eb}
+        .inv-chip{background:#eef2ff;color:#3730a3;border-radius:999px;padding:7px 11px;font-size:12px;font-weight:900}
+        .inv-result-count{margin-left:auto;color:#64748b;font-weight:900}
+        .inv-primary-stats{grid-template-columns:repeat(6,1fr)}
+        .inv-secondary-stats{grid-template-columns:repeat(4,1fr)}
+        .inv-stat-danger strong,.inv-negative{color:#dc2626!important}
+        .inv-low{color:#b45309!important}
+        .inv-zero{color:#64748b!important}
+        .inv-chart-grid{display:grid;grid-template-columns:1.2fr 1fr 1fr;gap:20px;margin-bottom:20px}
+        .inv-chart-grid .kx-chart-panel{margin-bottom:0}
+        .inv-chart-wide{grid-column:span 2}
+        .inv-lite-bar{margin:13px 0}
+        .inv-lite-label{display:flex;justify-content:space-between;gap:12px;align-items:center;margin-bottom:7px}
+        .inv-lite-label strong{color:#0f172a;font-size:13px}
+        .inv-lite-label span{color:#64748b;font-weight:900;font-size:12px;text-align:right}
+        .inv-lite-track{height:12px;border-radius:999px;background:#e5e7eb;overflow:hidden}
+        .inv-lite-fill{height:100%;border-radius:999px;background:linear-gradient(90deg,#2563eb,#60a5fa)}
+        .inv-lite-fill.inv-in{background:linear-gradient(90deg,#16a34a,#86efac)}
+        .inv-lite-fill.inv-out{background:linear-gradient(90deg,#dc2626,#fca5a5)}
+        .inv-lite-fill.inv-value{background:linear-gradient(90deg,#0f172a,#64748b)}
+        .inv-health{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+        .inv-health div{border-radius:14px;padding:14px;background:#f8fafc;text-align:center;border:1px solid #e5e7eb}
+        .inv-health span{display:block;color:#64748b;font-weight:900;font-size:11px;text-transform:uppercase}
+        .inv-health strong{display:block;font-size:24px;color:#0f172a;margin-top:5px}
+        .inv-table-meta{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+        .inv-page-size{height:42px;border:1px solid #d1d5db;border-radius:12px;padding:0 10px;font-weight:800;background:#fff}
+        .inv-badge{display:inline-block;border-radius:999px;padding:6px 9px;font-size:11px;font-weight:900;white-space:nowrap}
+        .inv-bad-neg{background:#fee2e2;color:#991b1b}
+        .inv-bad-zero{background:#f1f5f9;color:#475569}
+        .inv-bad-low{background:#fef3c7;color:#92400e}
+        .inv-bad-ok{background:#dcfce7;color:#166534}
+        .inv-detail-btn{border:0;border-radius:10px;background:#dbeafe;color:#1e40af;font-weight:900;padding:8px 11px}
+        .inv-ledger{display:none;background:#f8fafc}
+        .inv-ledger.open{display:table-row}
+        .inv-ledger-box{padding:18px}
+        .inv-detail-grid{display:grid;grid-template-columns:repeat(6,1fr);gap:10px;margin:12px 0 16px}
+        .inv-detail-grid div{background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:10px}
+        .inv-detail-grid span{display:block;color:#64748b;font-size:11px;font-weight:900;text-transform:uppercase}
+        .inv-detail-grid strong{display:block;color:#0f172a;margin-top:4px}
+        .inv-mini-table{font-size:12px}
+        .inv-mini-table thead th{position:static!important}
+        .inv-mobile-cards{display:none}
+        .inv-card{background:#fff;border:1px solid #e5e7eb;border-radius:16px;padding:16px;box-shadow:0 10px 24px rgba(15,23,42,.08)}
+        .inv-card-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}
+        .inv-card h3{margin:0;font-size:17px;font-weight:900;color:#0f172a}
+        .inv-card small{display:block;color:#64748b;font-weight:800;margin-top:3px}
+        .inv-card dl{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:14px 0}
+        .inv-card dt{color:#64748b;font-size:11px;text-transform:uppercase;font-weight:900}
+        .inv-card dd{margin:3px 0 0;font-weight:900;color:#0f172a}
+        .inv-card-details{display:none;border-top:1px solid #e5e7eb;margin-top:12px;padding-top:12px}
+        .inv-card-details.open{display:block}
+        .inv-sold-group{display:none;background:#f8fafc}
+        .inv-sold-group.open{display:table-row}
+        .inv-pagination{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:16px 24px;border-top:1px solid #e5e7eb}
+        .inv-pagination button{height:40px;border:0;border-radius:10px;background:#0f172a;color:#fff;font-weight:900;padding:0 14px}
+        .inv-pagination button:disabled{background:#cbd5e1;color:#64748b}
+        .inv-hidden-export{display:none}
+        body.kx-dark-mode .inv-field .form-control,body.kx-dark-mode .inv-field select,body.kx-dark-mode .inv-page-size{background:#020617;border-color:#334155;color:#e5e7eb}
+        body.kx-dark-mode .inv-checks,body.kx-dark-mode .inv-health div,body.kx-dark-mode .inv-detail-grid div,body.kx-dark-mode .inv-card,body.kx-dark-mode .inv-ledger,body.kx-dark-mode .inv-sold-group{background:#111827;border-color:#1e293b;color:#e5e7eb}
+        body.kx-dark-mode .inv-field label,body.kx-dark-mode .inv-checks-title,body.kx-dark-mode .inv-checks label,body.kx-dark-mode .inv-lite-label strong,body.kx-dark-mode .inv-health strong,body.kx-dark-mode .inv-detail-grid strong,body.kx-dark-mode .inv-card h3,body.kx-dark-mode .inv-card dd{color:#f8fafc}
+        body.kx-dark-mode .inv-lite-track{background:#1e293b}
+        body.kx-dark-mode .inv-card-details,body.kx-dark-mode .inv-chip-row,.kx-dark-mode .inv-pagination{border-color:#1e293b}
+        @media(max-width:1180px){.inv-filter-grid{grid-template-columns:repeat(2,1fr)}.inv-primary-stats{grid-template-columns:repeat(3,1fr)}.inv-chart-grid{grid-template-columns:1fr 1fr}.inv-chart-wide{grid-column:span 1}.inv-detail-grid{grid-template-columns:repeat(3,1fr)}}
+        @media(max-width:768px){.kx-inventory-page .kx-shell{width:calc(100% - 24px)}.inv-filter-grid,.inv-primary-stats,.inv-secondary-stats,.inv-chart-grid{grid-template-columns:1fr}.inv-checks{grid-template-columns:1fr}.inv-actions{display:grid;grid-template-columns:1fr}.inv-actions .kx-btn{width:100%}.inv-result-count{margin-left:0;width:100%}.inv-desktop-table{display:none}.inv-mobile-cards{display:grid;gap:12px}.inv-table-meta{display:block}.inv-table-meta .kx-search-wrap input{margin-bottom:10px}.inv-detail-grid{grid-template-columns:1fr 1fr}.inv-hero-meta{text-align:left}.inv-pagination{display:none}}
+        @media(max-width:520px){.inv-detail-grid,.inv-card dl,.inv-health{grid-template-columns:1fr}.kx-hero h1{font-size:22px}}
+        @media print{.kx-topbar,.kx-filter-panel,.inv-actions,.kx-search-wrap,.inv-pagination,.inv-detail-btn,.inv-charts,.inv-chart-grid,.inv-mobile-cards{display:none!important}.inv-print-title{display:block}.kx-inventory-page .kx-shell{width:100%;margin:0}.inv-desktop-table{display:block!important}.inv-ledger{display:none!important}.kx-table{font-size:10px}.kx-table tbody td,.kx-table thead th{padding:7px}@page{size:A4 landscape;margin:9mm}}
     </style>
 </head>
-<body class="kx-page">
+<body class="PaginaVanzari kx-page kx-inventory-page">
+<?php include 'header.php'; ?>
 <main class="kx-shell">
-    <?php include 'header.php'; ?>
-    <div class="inv-print-title"><h1>Inventory Analytics Dashboard</h1><p><?php echo inv_h($fromInput); ?> to <?php echo inv_h($toInput); ?></p></div>
+    <div class="inv-print-title"><h1>Inventory Analytics</h1><p><?php echo inv_h($fromInput); ?> to <?php echo inv_h($toInput); ?></p></div>
     <section class="kx-hero">
         <div>
-            <p class="kx-eyebrow">ERP Inventory Intelligence</p>
-            <h1>Inventory Analytics Dashboard</h1>
-            <p>Stock ledger, recipe consumption, current balance, valuation, variance, and health indicators.</p>
+            <div class="kx-eyebrow">Inventory Intelligence</div>
+            <h1>Inventory Analytics</h1>
+            <p>Monitor daily usage, stock movement, closing balance, current balance, and stock value.</p>
         </div>
-        <div class="kx-hero-badge"><span>Work Period</span><strong>06:00 to next day 06:00</strong></div>
+        <div class="kx-hero-badge inv-hero-meta">
+            <div><span>Generated</span><strong id="kxGeneratedAt">--</strong></div>
+            <div><span>Date Range</span><strong><?php echo inv_h($fromInput); ?> to <?php echo inv_h($toInput); ?></strong></div>
+            <?php if ($selectedWarehouseName !== '') { ?><div><span>Warehouse</span><strong><?php echo inv_h($selectedWarehouseName); ?></strong></div><?php } ?>
+            <button type="button" class="kx-theme-toggle" id="kxThemeToggle" title="Toggle dark mode">Dark</button>
+        </div>
     </section>
 
     <?php foreach ($errors as $error) { ?><section class="kx-alert kx-alert-error"><?php echo inv_h($error); ?></section><?php } ?>
     <section class="kx-alert">
-        DB profile: InventoryItems <?php echo inv_h(inv_value($profileRow, 'InventoryItems')); ?>, InventoryTransactions <?php echo inv_h(inv_value($profileRow, 'InventoryTransactions')); ?>, Recipes <?php echo inv_h(inv_value($profileRow, 'Recipes')); ?>, RecipeItems <?php echo inv_h(inv_value($profileRow, 'RecipeItems')); ?>. Current balance is calculated from ledger history, not from empty snapshot tables.
+        <span class="kx-dot"></span>
+        Work period: <strong><?php echo inv_h($fromInput); ?> 06:00</strong> to <strong><?php echo inv_h(date('Y-m-d', strtotime('+1 day', $toTs))); ?> 06:00</strong>.
+        Current balance is calculated from ledger history.
     </section>
 
-    <section class="kx-panel kx-filter-panel inv-filter">
+    <section class="kx-panel kx-filter-panel">
         <form method="get" action="inventoryDaily.php">
-            <div class="inv-grid">
-                <div><label>From Date</label><input class="form-control" type="date" name="fromDate" value="<?php echo inv_h($fromInput); ?>"></div>
-                <div><label>To Date</label><input class="form-control" type="date" name="toDate" value="<?php echo inv_h($toInput); ?>"></div>
-                <div><label>Warehouse</label><select class="form-control" name="warehouseId"><option value="">All Warehouses</option><?php foreach($warehouses as $w){ ?><option value="<?php echo (int)$w['Id']; ?>" <?php echo $warehouseId===(int)$w['Id']?'selected':''; ?>><?php echo inv_h($w['Name']); ?></option><?php } ?></select></div>
-                <div><label>Group</label><select class="form-control" name="groupCode"><option value="">All Groups</option><?php foreach($groups as $g){ ?><option value="<?php echo inv_h($g['GroupCode']); ?>" <?php echo $groupCode===$g['GroupCode']?'selected':''; ?>><?php echo inv_h($g['GroupCode']); ?></option><?php } ?></select></div>
-                <div><label>Item</label><select class="form-control" name="itemId"><option value="">All Items</option><?php foreach($items as $it){ ?><option value="<?php echo (int)$it['Id']; ?>" <?php echo $itemId===(int)$it['Id']?'selected':''; ?>><?php echo inv_h($it['Name']); ?></option><?php } ?></select></div>
-                <div><label>Movement</label><select class="form-control" name="movementType"><option value="">All Movements</option><?php foreach(array('Purchase','Purchase Return','Recipe Consumption','Production','Transfer In','Transfer Out','Waste','Adjustment +','Adjustment -','Inventory Movement') as $m){ ?><option value="<?php echo inv_h($m); ?>" <?php echo $movementType===$m?'selected':''; ?>><?php echo inv_h($m); ?></option><?php } ?></select></div>
-                <div><label>Search</label><input class="form-control" type="search" name="search" id="invLiveSearch" value="<?php echo inv_h($search); ?>" placeholder="Item, code, group"></div>
-                <div><label>Low Stock Qty</label><input class="form-control" type="number" step="0.001" name="lowStockThreshold" value="<?php echo inv_h($lowStockThreshold); ?>"></div>
-                <div><label><input type="checkbox" name="showZeroBalance" value="1" <?php echo $showZeroBalance?'checked':''; ?>> Show Zero Balance</label><label><input type="checkbox" name="showZeroMovement" value="1" <?php echo $showZeroMovement?'checked':''; ?>> Show Zero Movement</label></div>
-                <div><label><input type="checkbox" name="showNegativeOnly" value="1" <?php echo $showNegativeOnly?'checked':''; ?>> Negative Only</label><label><input type="checkbox" name="showLowStock" value="1" <?php echo $showLowStock?'checked':''; ?>> Low Stock</label></div>
-                <div class="inv-toolbar">
-                    <button class="inv-btn inv-blue" type="submit">Search</button>
-                    <a class="inv-btn inv-soft" href="inventoryDaily.php">Reset</a>
-                    <a class="inv-btn inv-green" href="?<?php echo inv_h(http_build_query(array_merge($_GET, array('export'=>'excel')))); ?>">Excel</a>
-                    <button class="inv-btn inv-red" type="button" onclick="window.print()">PDF / Print</button>
+            <div class="inv-filter-grid">
+                <div class="inv-field"><label>From Date</label><input class="form-control" type="date" name="fromDate" value="<?php echo inv_h($fromInput); ?>"></div>
+                <div class="inv-field"><label>To Date</label><input class="form-control" type="date" name="toDate" value="<?php echo inv_h($toInput); ?>"></div>
+                <div class="inv-field"><label>Warehouse</label><select class="form-control" name="warehouseId"><option value="">All Warehouses</option><?php foreach($warehouses as $w){ ?><option value="<?php echo (int)$w['Id']; ?>" <?php echo $warehouseId===(int)$w['Id']?'selected':''; ?>><?php echo inv_h($w['Name']); ?></option><?php } ?></select></div>
+                <div class="inv-field"><label>Inventory Group</label><select class="form-control" name="groupCode"><option value="">All Groups</option><?php foreach($groups as $g){ ?><option value="<?php echo inv_h($g['GroupCode']); ?>" <?php echo $groupCode===$g['GroupCode']?'selected':''; ?>><?php echo inv_h($g['GroupCode']); ?></option><?php } ?></select></div>
+                <div class="inv-field"><label>Inventory Item</label><select class="form-control" name="itemId"><option value="">All Items</option><?php foreach($items as $it){ ?><option value="<?php echo (int)$it['Id']; ?>" <?php echo $itemId===(int)$it['Id']?'selected':''; ?>><?php echo inv_h($it['Name']); ?></option><?php } ?></select></div>
+                <div class="inv-field"><label>Movement Type</label><select class="form-control" name="movementType"><option value="">All Movements</option><?php foreach(array('Purchase','Purchase Return','Recipe Consumption','Production','Transfer In','Transfer Out','Waste','Adjustment +','Adjustment -','Inventory Movement') as $m){ ?><option value="<?php echo inv_h($m); ?>" <?php echo $movementType===$m?'selected':''; ?>><?php echo inv_h($m); ?></option><?php } ?></select></div>
+                <div class="inv-field"><label>Search</label><input class="form-control" type="search" name="search" value="<?php echo inv_h($search); ?>" placeholder="Item, code, group"></div>
+                <div class="inv-field"><label>Low Stock Threshold</label><input class="form-control" type="number" step="0.001" name="lowStockThreshold" value="<?php echo inv_h($lowStockThreshold); ?>"></div>
+                <div>
+                    <span class="inv-checks-title">Options</span>
+                    <div class="inv-checks">
+                        <label><input type="checkbox" name="showZeroBalance" value="1" <?php echo $showZeroBalance?'checked':''; ?>> Show Zero Balance</label>
+                        <label><input type="checkbox" name="showZeroMovement" value="1" <?php echo $showZeroMovement?'checked':''; ?>> Show Zero Movement</label>
+                        <label><input type="checkbox" name="showNegativeOnly" value="1" <?php echo $showNegativeOnly?'checked':''; ?>> Negative Stock Only</label>
+                        <label><input type="checkbox" name="showLowStock" value="1" <?php echo $showLowStock?'checked':''; ?>> Low Stock Only</label>
+                    </div>
                 </div>
+                <div class="inv-actions">
+                    <button class="kx-btn kx-btn-primary" type="submit">Show Report</button>
+                    <a class="kx-btn kx-btn-dark" href="inventoryDaily.php">Reset</a>
+                    <a class="kx-btn kx-btn-success" href="?<?php echo inv_h(http_build_query(array_merge($_GET, array('export'=>'excel')))); ?>">Excel</a>
+                    <button class="kx-btn kx-btn-danger" type="button" onclick="kxExportInventoryPdf()">PDF</button>
+                    <button class="kx-btn kx-btn-dark" type="button" onclick="window.print()">Print</button>
+                </div>
+            </div>
+            <div class="inv-chip-row">
+                <?php foreach ($appliedFilters as $chip) { ?><span class="inv-chip"><?php echo inv_h($chip); ?></span><?php } ?>
+                <span class="inv-result-count"><?php echo number_format(count($rows)); ?> results</span>
             </div>
         </form>
     </section>
 
-    <section class="inv-kpis">
-        <div class="inv-kpi"><span>Total Items</span><strong><?php echo number_format($summary['total_items']); ?></strong></div>
-        <div class="inv-kpi"><span>Items Used</span><strong><?php echo number_format($summary['items_used']); ?></strong></div>
-        <div class="inv-kpi"><span>No Movement</span><strong><?php echo number_format($summary['no_movement']); ?></strong></div>
-        <div class="inv-kpi"><span>Opening Value</span><strong><?php echo inv_money($summary['opening_value']); ?></strong></div>
-        <div class="inv-kpi"><span>Closing Value</span><strong><?php echo inv_money($summary['closing_value']); ?></strong></div>
-        <div class="inv-kpi"><span>Current Value</span><strong><?php echo inv_money($summary['current_value']); ?></strong></div>
-        <div class="inv-kpi"><span>Usage Qty</span><strong><?php echo inv_num($summary['usage_qty']); ?></strong></div>
-        <div class="inv-kpi"><span>Usage Cost</span><strong><?php echo inv_money($summary['usage_cost']); ?></strong></div>
-        <div class="inv-kpi warn"><span>Negative Stock</span><strong><?php echo number_format($summary['negative_stock']); ?></strong></div>
-        <div class="inv-kpi"><span>Low Stock</span><strong><?php echo number_format($summary['low_stock']); ?></strong></div>
-        <div class="inv-kpi"><span>Zero Balance</span><strong><?php echo number_format($summary['zero_balance']); ?></strong></div>
-        <div class="inv-kpi"><span>Purchases</span><strong><?php echo inv_num($summary['purchases']); ?></strong></div>
+    <section class="kx-stats kx-stats-extended inv-primary-stats">
+        <div class="kx-stat-card"><div class="kx-stat-icon">IT</div><span>Total Inventory Items</span><strong><?php echo number_format($summary['total_items']); ?></strong></div>
+        <div class="kx-stat-card"><div class="kx-stat-icon">US</div><span>Items Used</span><strong><?php echo number_format($summary['items_used']); ?></strong></div>
+        <div class="kx-stat-card"><div class="kx-stat-icon">QT</div><span>Total Usage Qty</span><strong><?php echo inv_num($summary['usage_qty']); ?></strong></div>
+        <div class="kx-stat-card"><div class="kx-stat-icon">CV</div><span>Current Stock Value</span><strong><?php echo inv_money($summary['current_value']); ?></strong></div>
+        <div class="kx-stat-card inv-stat-danger"><div class="kx-stat-icon">NG</div><span>Negative Stock</span><strong><?php echo number_format($summary['negative_stock']); ?></strong></div>
+        <div class="kx-stat-card"><div class="kx-stat-icon">LW</div><span>Low Stock</span><strong><?php echo number_format($summary['low_stock']); ?></strong></div>
     </section>
 
-    <section class="inv-charts inv-lite-charts">
-        <div class="inv-chart">
-            <h3>Top 10 Usage</h3>
+    <section class="kx-stats kx-stats-extended inv-secondary-stats">
+        <div class="kx-stat-card"><span>Opening Stock Value</span><strong><?php echo inv_money($summary['opening_value']); ?></strong></div>
+        <div class="kx-stat-card"><span>Closing Stock Value</span><strong><?php echo inv_money($summary['closing_value']); ?></strong></div>
+        <div class="kx-stat-card"><span>Purchases</span><strong><?php echo inv_num($summary['purchases']); ?></strong></div>
+        <div class="kx-stat-card"><span>Waste</span><strong><?php echo inv_num($summary['waste']); ?></strong></div>
+        <div class="kx-stat-card"><span>Adjustments</span><strong><?php echo inv_num($summary['adjustments']); ?></strong></div>
+        <div class="kx-stat-card"><span>Production</span><strong><?php echo inv_num($summary['production']); ?></strong></div>
+        <div class="kx-stat-card"><span>No Movement</span><strong><?php echo number_format($summary['no_movement']); ?></strong></div>
+        <div class="kx-stat-card"><span>Zero Balance</span><strong><?php echo number_format($summary['zero_balance']); ?></strong></div>
+    </section>
+
+    <section class="inv-chart-grid inv-charts">
+        <div class="kx-panel kx-chart-panel">
+            <div class="kx-chart-header"><div><h2>Top 10 Usage Items</h2><p>Recipe and direct usage in the selected period</p></div><span>Usage</span></div>
             <?php $maxUsage = empty($chartUsage) ? 0 : max($chartUsage); ?>
-            <?php if ($maxUsage <= 0) { ?><div class="kx-empty-row">No usage for selected period.</div><?php } ?>
+            <?php if ($maxUsage <= 0) { ?><div class="kx-chart-empty">No usage for selected period.</div><?php } ?>
             <?php foreach ($chartLabels as $idx => $label) { $val = $chartUsage[$idx]; $pct = $maxUsage > 0 ? max(3, min(100, ($val / $maxUsage) * 100)) : 0; ?>
-                <div class="inv-lite-bar"><div class="inv-lite-label"><strong><?php echo inv_h($label); ?></strong><span><?php echo inv_num($val); ?></span></div><div class="inv-lite-track"><div style="width:<?php echo $pct; ?>%"></div></div></div>
+                <div class="inv-lite-bar"><div class="inv-lite-label"><strong><?php echo inv_h($label); ?></strong><span><?php echo inv_num($val); ?></span></div><div class="inv-lite-track"><div class="inv-lite-fill" style="width:<?php echo $pct; ?>%"></div></div></div>
             <?php } ?>
         </div>
-        <div class="inv-chart">
-            <h3>Stock In vs Stock Out</h3>
+        <div class="kx-panel kx-chart-panel">
+            <div class="kx-chart-header"><div><h2>Stock In vs Stock Out</h2><p>All movement classes</p></div><span>Flow</span></div>
             <?php $flowMax = max(1, $chartIn, $chartOut); ?>
-            <div class="inv-lite-bar"><div class="inv-lite-label"><strong>Stock In</strong><span><?php echo inv_num($chartIn); ?></span></div><div class="inv-lite-track"><div class="in" style="width:<?php echo min(100, ($chartIn / $flowMax) * 100); ?>%"></div></div></div>
-            <div class="inv-lite-bar"><div class="inv-lite-label"><strong>Stock Out</strong><span><?php echo inv_num($chartOut); ?></span></div><div class="inv-lite-track"><div class="out" style="width:<?php echo min(100, ($chartOut / $flowMax) * 100); ?>%"></div></div></div>
+            <div class="inv-lite-bar"><div class="inv-lite-label"><strong>Stock In</strong><span><?php echo inv_num($chartIn); ?></span></div><div class="inv-lite-track"><div class="inv-lite-fill inv-in" style="width:<?php echo min(100, ($chartIn / $flowMax) * 100); ?>%"></div></div></div>
+            <div class="inv-lite-bar"><div class="inv-lite-label"><strong>Stock Out</strong><span><?php echo inv_num($chartOut); ?></span></div><div class="inv-lite-track"><div class="inv-lite-fill inv-out" style="width:<?php echo min(100, ($chartOut / $flowMax) * 100); ?>%"></div></div></div>
         </div>
-        <div class="inv-chart">
-            <h3>Inventory Health</h3>
-            <div class="inv-health"><div><span>Negative</span><strong><?php echo $chartNegative; ?></strong></div><div><span>Zero</span><strong><?php echo $chartZero; ?></strong></div><div><span>Low</span><strong><?php echo $summary['low_stock']; ?></strong></div></div>
-            <p class="inv-health-note">Lightweight local charts. No external scripts loaded.</p>
+        <div class="kx-panel kx-chart-panel">
+            <div class="kx-chart-header"><div><h2>Inventory Health</h2><p>Current stock status</p></div><span>Status</span></div>
+            <div class="inv-health"><div><span>Negative</span><strong class="inv-negative"><?php echo $chartNegative; ?></strong></div><div><span>Zero</span><strong class="inv-zero"><?php echo $chartZero; ?></strong></div><div><span>Healthy</span><strong><?php echo $chartHealthy; ?></strong></div></div>
+        </div>
+        <div class="kx-panel kx-chart-panel">
+            <div class="kx-chart-header"><div><h2>Current Value by Group</h2><p>Stock value distribution</p></div><span>Value</span></div>
+            <?php $maxGroupValue = empty($valueByGroup) ? 0 : max($valueByGroup); ?>
+            <?php if ($maxGroupValue <= 0) { ?><div class="kx-chart-empty">No stock value for selected filters.</div><?php } ?>
+            <?php $groupShown = 0; foreach ($valueByGroup as $groupName => $groupValue) { if ($groupShown++ >= 8) { break; } $pct = $maxGroupValue > 0 ? max(3, min(100, ($groupValue / $maxGroupValue) * 100)) : 0; ?>
+                <div class="inv-lite-bar"><div class="inv-lite-label"><strong><?php echo inv_h($groupName); ?></strong><span><?php echo inv_money($groupValue); ?></span></div><div class="inv-lite-track"><div class="inv-lite-fill inv-value" style="width:<?php echo $pct; ?>%"></div></div></div>
+            <?php } ?>
+        </div>
+        <div class="kx-panel kx-chart-panel inv-chart-wide">
+            <div class="kx-chart-header"><div><h2>Top Sold Menu Items</h2><p>Sold quantity with recipe usage impact</p></div><span>Sold</span></div>
+            <?php $soldSlice = array_slice($topSoldMenu, 0, 8); $maxSold = 0; foreach ($soldSlice as $soldChart) { if ($soldChart['sold_qty'] > $maxSold) { $maxSold = $soldChart['sold_qty']; } } ?>
+            <?php if ($maxSold <= 0) { ?><div class="kx-chart-empty">No sold menu recipe usage for selected period.</div><?php } ?>
+            <?php foreach ($soldSlice as $soldChart) { $pct = $maxSold > 0 ? max(3, min(100, ($soldChart['sold_qty'] / $maxSold) * 100)) : 0; ?>
+                <div class="inv-lite-bar"><div class="inv-lite-label"><strong><?php echo inv_h($soldChart['menu'] . ' / ' . $soldChart['portion']); ?></strong><span><?php echo inv_num($soldChart['sold_qty']); ?> sold</span></div><div class="inv-lite-track"><div class="inv-lite-fill inv-in" style="width:<?php echo $pct; ?>%"></div></div></div>
+            <?php } ?>
         </div>
     </section>
 
     <section class="kx-panel kx-table-panel">
         <div class="kx-table-toolbar">
-            <div><h2>ERP Stock Position</h2><p><?php echo count($rows); ?> inventory rows. Click + to open stock ledger.</p></div>
-            <div class="kx-search-wrap"><input id="invTableSearch" type="search" placeholder="Live search"></div>
+            <div><h2>Inventory Stock Position</h2><p><span id="invVisibleCount"><?php echo count($rows); ?></span> of <?php echo count($rows); ?> items. Details include ledger movement and technical columns.</p></div>
+            <div class="inv-table-meta">
+                <div class="kx-search-wrap"><input id="invTableSearch" type="search" placeholder="Search inventory..."></div>
+                <select class="inv-page-size" id="invPageSize"><option value="10">10 rows</option><option value="25" selected>25 rows</option><option value="50">50 rows</option><option value="999999">All rows</option></select>
+            </div>
         </div>
-        <div class="kx-table-wrap">
+        <div class="kx-table-wrap inv-desktop-table">
             <table class="kx-table" id="inventoryTable">
-                <thead><tr><th></th><th>Item Code</th><th>Inventory Item</th><th>Group</th><th>Warehouse</th><th>Unit</th><th>Opening</th><th>Purchase</th><th>Production</th><th>Transfer In</th><th>Recipe Usage</th><th>Direct Usage</th><th>Waste</th><th>Adj +</th><th>Adj -</th><th>Transfer Out</th><th>Closing</th><th>Current</th><th>Unit Cost</th><th>Usage Cost</th><th>Current Value</th><th>Variance</th><th>Moves</th><th>Status</th></tr></thead>
-                <tbody>
-                <?php foreach ($rows as $row) { $itemKey=(string)$row['ItemCode']; $status='OK'; $badge='inv-bad-ok'; if ((float)$row['CurrentBalance'] < 0) { $status='Negative'; $badge='inv-bad-neg'; } elseif ((float)$row['CurrentBalance'] == 0) { $status='Zero'; $badge='inv-bad-zero'; } ?>
-                    <tr class="inv-main-row" data-search="<?php echo inv_h(strtolower($row['ItemCode'].' '.$row['ItemName'].' '.$row['InventoryGroup'].' '.$row['Warehouse'])); ?>">
-                        <td><button type="button" class="inv-expand" data-target="ledger-<?php echo (int)$row['ItemCode']; ?>">+</button></td>
-                        <td><?php echo (int)$row['ItemCode']; ?></td><td class="kx-item-name"><?php echo inv_h($row['ItemName']); ?></td><td><?php echo inv_h($row['InventoryGroup']); ?></td><td><?php echo inv_h($row['Warehouse']); ?></td><td><?php echo inv_h($row['BaseUnit']); ?></td>
-                        <td class="kx-num"><?php echo inv_num($row['OpeningQty']); ?></td><td class="kx-num"><?php echo inv_num($row['PurchaseQty']); ?></td><td class="kx-num"><?php echo inv_num($row['ProductionQty']); ?></td><td class="kx-num"><?php echo inv_num($row['TransferInQty']); ?></td><td class="kx-num"><?php echo inv_num($row['RecipeUsageQty']); ?></td><td class="kx-num"><?php echo inv_num($row['DirectUsageQty']); ?></td><td class="kx-num"><?php echo inv_num($row['WasteQty']); ?></td><td class="kx-num"><?php echo inv_num($row['AdjustmentPlusQty']); ?></td><td class="kx-num"><?php echo inv_num($row['AdjustmentMinusQty']); ?></td><td class="kx-num"><?php echo inv_num($row['TransferOutQty']); ?></td><td class="kx-num"><?php echo inv_num($row['ClosingBalance']); ?></td><td class="kx-num"><?php echo inv_num($row['CurrentBalance']); ?></td><td class="kx-money"><?php echo inv_money($row['UnitCost']); ?></td><td class="kx-money"><?php echo inv_money($row['UsageCost']); ?></td><td class="kx-money"><?php echo inv_money($row['CurrentStockValue']); ?></td><td class="kx-num"><?php echo inv_num($row['Variance']); ?></td><td class="kx-num"><?php echo (int)$row['MovementCount']; ?></td><td><span class="inv-badge <?php echo $badge; ?>"><?php echo $status; ?></span></td>
+                <thead><tr><th onclick="invSortTable(0)">Item <span>Sort</span></th><th onclick="invSortTable(1)">Group <span>Sort</span></th><th>Warehouse</th><th>Unit</th><th onclick="invSortTable(4)" class="kx-num">Opening <span>Sort</span></th><th class="kx-num">Purchase</th><th onclick="invSortTable(6)" class="kx-num">Usage <span>Sort</span></th><th class="kx-num">Waste</th><th class="kx-num">Adjustment</th><th class="kx-num">Closing</th><th class="kx-num">Current</th><th class="kx-num">Variance</th><th class="kx-money">Current Value</th><th>Details</th></tr></thead>
+                <tbody id="invTableBody">
+                <?php foreach ($rows as $row) { $itemKey=(string)$row['ItemCode']; $usageQty=(float)$row['RecipeUsageQty'] + (float)$row['DirectUsageQty']; $adjustmentQty=(float)$row['AdjustmentPlusQty'] - (float)$row['AdjustmentMinusQty']; $status='Healthy'; $badge='inv-bad-ok'; if ((float)$row['CurrentBalance'] < 0) { $status='Negative'; $badge='inv-bad-neg'; } elseif ((float)$row['CurrentBalance'] == 0) { $status='Zero'; $badge='inv-bad-zero'; } elseif ((float)$row['CurrentBalance'] <= $lowStockThreshold) { $status='Low'; $badge='inv-bad-low'; } $rowClass = ((float)$row['CurrentBalance'] < 0 ? ' inv-negative-row' : (((float)$row['CurrentBalance'] > 0 && (float)$row['CurrentBalance'] <= $lowStockThreshold) ? ' inv-low-row' : '')); ?>
+                    <tr class="inv-main-row<?php echo $rowClass; ?>" data-search="<?php echo inv_h(strtolower($row['ItemCode'].' '.$row['ItemName'].' '.$row['InventoryGroup'].' '.$row['Warehouse'].' '.$status)); ?>">
+                        <td><div class="kx-item-name"><?php echo inv_h($row['ItemName']); ?></div><div class="kx-item-group">Code <?php echo (int)$row['ItemCode']; ?> <?php if ((int)$row['MovementCount'] === 0) { ?><span class="inv-badge inv-bad-zero">Zero movement</span><?php } ?></div></td>
+                        <td><?php echo inv_h($row['InventoryGroup']); ?></td><td><?php echo inv_h($row['Warehouse']); ?></td><td><?php echo inv_h($row['BaseUnit']); ?></td>
+                        <td class="kx-num"><?php echo inv_num($row['OpeningQty']); ?></td><td class="kx-num"><?php echo inv_num($row['PurchaseQty']); ?></td><td class="kx-num"><?php echo inv_num($usageQty); ?></td><td class="kx-num"><?php echo inv_num($row['WasteQty']); ?></td><td class="kx-num <?php echo $adjustmentQty < 0 ? 'inv-negative' : ''; ?>"><?php echo inv_num($adjustmentQty); ?></td><td class="kx-num"><?php echo inv_num($row['ClosingBalance']); ?></td><td class="kx-num <?php echo (float)$row['CurrentBalance'] < 0 ? 'inv-negative' : (((float)$row['CurrentBalance'] <= $lowStockThreshold && (float)$row['CurrentBalance'] > 0) ? 'inv-low' : ''); ?>"><?php echo inv_num($row['CurrentBalance']); ?></td><td class="kx-num <?php echo (float)$row['Variance'] < 0 ? 'inv-negative' : ''; ?>"><?php echo inv_num($row['Variance']); ?></td><td class="kx-money"><?php echo inv_money($row['CurrentStockValue']); ?></td><td><button type="button" class="inv-detail-btn" data-target="ledger-<?php echo (int)$row['ItemCode']; ?>">Details</button><br><span class="inv-badge <?php echo $badge; ?>"><?php echo $status; ?></span></td>
                     </tr>
-                    <tr class="inv-ledger" id="ledger-<?php echo (int)$row['ItemCode']; ?>"><td colspan="24"><div class="inv-ledger-box"><strong>Stock Ledger</strong><table><thead><tr><th>Date / Time</th><th>Type</th><th>Reference</th><th>Warehouse</th><th>Qty In</th><th>Qty Out</th><th>Running Balance</th><th>Source</th><th>Document</th></tr></thead><tbody>
-                    <?php if (empty($ledgerByItem[$itemKey])) { ?><tr><td colspan="9">No period ledger movements.</td></tr><?php } else { foreach ($ledgerByItem[$itemKey] as $mv) { ?><tr><td><?php echo inv_h($mv['Date'] instanceof DateTime ? $mv['Date']->format('Y-m-d H:i:s') : $mv['Date']); ?></td><td><?php echo inv_h($mv['MovementClass']); ?></td><td><?php echo inv_h($mv['Reference']); ?></td><td><?php echo inv_h($mv['Warehouse']); ?></td><td class="kx-num"><?php echo inv_num($mv['QtyIn']); ?></td><td class="kx-num"><?php echo inv_num($mv['QtyOut']); ?></td><td class="kx-num"><?php echo inv_num($mv['RunningBalance']); ?></td><td><?php echo inv_h($mv['SourceTable'].' #'.$mv['SourceId']); ?></td><td><?php echo inv_h($mv['DocumentText']); ?></td></tr><?php }} ?>
-                    </tbody></table></div></td></tr>
+                    <tr class="inv-ledger" id="ledger-<?php echo (int)$row['ItemCode']; ?>"><td colspan="14"><div class="inv-ledger-box">
+                        <strong>Movement Details</strong>
+                        <div class="inv-detail-grid">
+                            <div><span>Production</span><strong><?php echo inv_num($row['ProductionQty']); ?></strong></div><div><span>Transfer In</span><strong><?php echo inv_num($row['TransferInQty']); ?></strong></div><div><span>Transfer Out</span><strong><?php echo inv_num($row['TransferOutQty']); ?></strong></div><div><span>Recipe Usage</span><strong><?php echo inv_num($row['RecipeUsageQty']); ?></strong></div><div><span>Direct Usage</span><strong><?php echo inv_num($row['DirectUsageQty']); ?></strong></div><div><span>Unit Cost</span><strong><?php echo inv_money($row['UnitCost']); ?></strong></div>
+                        </div>
+                        <table class="kx-table inv-mini-table"><thead><tr><th>Date / Time</th><th>Movement Class</th><th>Transaction Type</th><th>Warehouse</th><th class="kx-num">Qty In</th><th class="kx-num">Qty Out</th><th class="kx-num">Net Qty</th><th class="kx-num">Running Balance</th><th>Reference</th><th>Source Table</th><th>Source ID</th></tr></thead><tbody>
+                        <?php if (empty($ledgerByItem[$itemKey])) { ?><tr><td colspan="11" class="kx-empty-row">No period ledger movements.</td></tr><?php } else { foreach ($ledgerByItem[$itemKey] as $mv) { ?><tr><td><?php echo inv_h(inv_date_value($mv['Date'])); ?></td><td><?php echo inv_h($mv['MovementClass']); ?></td><td><?php echo inv_h($mv['TransactionType']); ?></td><td><?php echo inv_h($mv['Warehouse']); ?></td><td class="kx-num"><?php echo inv_num($mv['QtyIn']); ?></td><td class="kx-num"><?php echo inv_num($mv['QtyOut']); ?></td><td class="kx-num <?php echo (float)$mv['NetQty'] < 0 ? 'inv-negative' : ''; ?>"><?php echo inv_num($mv['NetQty']); ?></td><td class="kx-num"><?php echo inv_num($mv['RunningBalance']); ?></td><td><?php echo inv_h($mv['Reference']); ?></td><td><?php echo inv_h($mv['SourceTable']); ?></td><td><?php echo inv_h($mv['SourceId']); ?></td></tr><?php }} ?>
+                        </tbody></table>
+                    </div></td></tr>
                 <?php } ?>
+                <?php if (empty($rows)) { ?><tr><td colspan="14" class="kx-empty-row">No inventory items match the selected filters.</td></tr><?php } ?>
                 </tbody>
             </table>
         </div>
         <div class="inv-mobile-cards">
-            <?php foreach ($rows as $row) { ?>
-                <div class="inv-card"><h3><?php echo inv_h($row['ItemName']); ?></h3><dl><div><dt>Opening</dt><dd><?php echo inv_num($row['OpeningQty']); ?></dd></div><div><dt>Usage</dt><dd><?php echo inv_num((float)$row['RecipeUsageQty'] + (float)$row['DirectUsageQty']); ?></dd></div><div><dt>Closing</dt><dd><?php echo inv_num($row['ClosingBalance']); ?></dd></div><div><dt>Current</dt><dd><?php echo inv_num($row['CurrentBalance']); ?></dd></div><div><dt>Value</dt><dd><?php echo inv_money($row['CurrentStockValue']); ?></dd></div><div><dt>Moves</dt><dd><?php echo (int)$row['MovementCount']; ?></dd></div></dl></div>
+            <?php foreach ($rows as $row) { $usageQty=(float)$row['RecipeUsageQty'] + (float)$row['DirectUsageQty']; $status='Healthy'; $badge='inv-bad-ok'; if ((float)$row['CurrentBalance'] < 0) { $status='Negative'; $badge='inv-bad-neg'; } elseif ((float)$row['CurrentBalance'] == 0) { $status='Zero'; $badge='inv-bad-zero'; } elseif ((float)$row['CurrentBalance'] <= $lowStockThreshold) { $status='Low'; $badge='inv-bad-low'; } ?>
+                <div class="inv-card" data-search="<?php echo inv_h(strtolower($row['ItemCode'].' '.$row['ItemName'].' '.$row['InventoryGroup'].' '.$row['Warehouse'].' '.$status)); ?>">
+                    <div class="inv-card-head"><div><h3><?php echo inv_h($row['ItemName']); ?></h3><small>Code <?php echo (int)$row['ItemCode']; ?> / <?php echo inv_h($row['InventoryGroup']); ?></small></div><span class="inv-badge <?php echo $badge; ?>"><?php echo $status; ?></span></div>
+                    <dl><div><dt>Warehouse</dt><dd><?php echo inv_h($row['Warehouse']); ?></dd></div><div><dt>Unit</dt><dd><?php echo inv_h($row['BaseUnit']); ?></dd></div><div><dt>Opening</dt><dd><?php echo inv_num($row['OpeningQty']); ?></dd></div><div><dt>Usage</dt><dd><?php echo inv_num($usageQty); ?></dd></div><div><dt>Closing</dt><dd><?php echo inv_num($row['ClosingBalance']); ?></dd></div><div><dt>Current Balance</dt><dd><?php echo inv_num($row['CurrentBalance']); ?></dd></div><div><dt>Variance</dt><dd><?php echo inv_num($row['Variance']); ?></dd></div><div><dt>Current Value</dt><dd><?php echo inv_money($row['CurrentStockValue']); ?></dd></div></dl>
+                    <button type="button" class="inv-detail-btn inv-mobile-detail-toggle">View Details</button>
+                    <div class="inv-card-details"><dl><div><dt>Purchase</dt><dd><?php echo inv_num($row['PurchaseQty']); ?></dd></div><div><dt>Waste</dt><dd><?php echo inv_num($row['WasteQty']); ?></dd></div><div><dt>Adjustment +</dt><dd><?php echo inv_num($row['AdjustmentPlusQty']); ?></dd></div><div><dt>Adjustment -</dt><dd><?php echo inv_num($row['AdjustmentMinusQty']); ?></dd></div><div><dt>Moves</dt><dd><?php echo (int)$row['MovementCount']; ?></dd></div><div><dt>Unit Cost</dt><dd><?php echo inv_money($row['UnitCost']); ?></dd></div></dl></div>
+                </div>
             <?php } ?>
+            <?php if (empty($rows)) { ?><div class="kx-empty-state"><h2>No inventory items</h2><p>No items match the selected filters.</p></div><?php } ?>
+        </div>
+        <div class="inv-pagination"><span id="invPageInfo">Showing results</span><div><button type="button" id="invPrevPage">Previous</button> <button type="button" id="invNextPage">Next</button></div></div>
+    </section>
+
+    <section class="kx-panel kx-table-panel">
+        <div class="kx-table-toolbar">
+            <div><h2>Sold Items &amp; Recipe Usage</h2><p><?php echo count($soldRows); ?> ingredient usage rows grouped by sold menu item.</p></div>
+        </div>
+        <div class="kx-table-wrap">
+            <table class="kx-table" id="soldUsageTable">
+                <thead><tr><th>Menu Item</th><th>Portion</th><th class="kx-num">Sold Qty</th><th class="kx-num">Total Ingredient Usage</th><th>Details</th></tr></thead>
+                <tbody>
+                <?php $soldIndex = 0; foreach ($soldByMenu as $soldKey => $soldGroup) { $soldIndex++; ?>
+                    <tr><td><div class="kx-item-name"><?php echo inv_h($soldGroup['menu']); ?></div></td><td><?php echo inv_h($soldGroup['portion']); ?></td><td class="kx-num"><?php echo inv_num($soldGroup['sold_qty']); ?></td><td class="kx-num"><?php echo inv_num($soldGroup['usage']); ?></td><td><button type="button" class="inv-detail-btn" data-target="sold-<?php echo $soldIndex; ?>">Details</button></td></tr>
+                    <tr class="inv-sold-group" id="sold-<?php echo $soldIndex; ?>"><td colspan="5"><div class="inv-ledger-box"><table class="kx-table inv-mini-table"><thead><tr><th>Recipe Name</th><th>Inventory Ingredient</th><th>Ingredient Unit</th><th class="kx-num">Usage Per Item</th><th class="kx-num">Total Ingredient Usage</th></tr></thead><tbody>
+                    <?php foreach ($soldGroup['rows'] as $soldDetail) { ?><tr><td><?php echo inv_h($soldDetail['RecipeName']); ?></td><td><?php echo inv_h($soldDetail['IngredientName']); ?></td><td><?php echo inv_h($soldDetail['IngredientUnit']); ?></td><td class="kx-num"><?php echo inv_num($soldDetail['UsagePerItem'], 6); ?></td><td class="kx-num"><?php echo inv_num($soldDetail['TotalIngredientUsage']); ?></td></tr><?php } ?>
+                    </tbody></table></div></td></tr>
+                <?php } ?>
+                <?php if (empty($soldByMenu)) { ?><tr><td colspan="5" class="kx-empty-row">No sold menu recipe usage for selected filters.</td></tr><?php } ?>
+                </tbody>
+            </table>
         </div>
     </section>
-</main>
-<script>
 
-function invFilterRows(){
-    var q=(document.getElementById('invTableSearch').value||'').toLowerCase();
-    document.querySelectorAll('.inv-main-row').forEach(function(row){
-        var show=(row.getAttribute('data-search')||'').indexOf(q)>-1;
-        row.style.display=show?'':'none';
-        var next=row.nextElementSibling;
-        if(!show && next && next.classList.contains('inv-ledger')) next.style.display='none';
-    });
+    <div id="inventory_export" class="inv-hidden-export">
+        <h2>Inventory Analytics</h2>
+        <p><?php echo inv_h($fromInput); ?> 06:00 to <?php echo inv_h(date('Y-m-d', strtotime('+1 day', $toTs))); ?> 06:00</p>
+        <table border="1"><tr><th>Metric</th><th>Value</th></tr>
+            <?php foreach ($summary as $k=>$v) { echo '<tr><td>'.inv_h($k).'</td><td>'.inv_h($v).'</td></tr>'; } ?>
+        </table>
+        <table border="1"><tr><th>Item</th><th>Group</th><th>Warehouse</th><th>Unit</th><th>Opening</th><th>Purchase</th><th>Usage</th><th>Waste</th><th>Adjustment</th><th>Closing</th><th>Current</th><th>Variance</th><th>Current Value</th></tr>
+            <?php foreach ($rows as $row) { $usageQty=(float)$row['RecipeUsageQty'] + (float)$row['DirectUsageQty']; $adjustmentQty=(float)$row['AdjustmentPlusQty'] - (float)$row['AdjustmentMinusQty']; echo '<tr><td>'.inv_h($row['ItemName']).'</td><td>'.inv_h($row['InventoryGroup']).'</td><td>'.inv_h($row['Warehouse']).'</td><td>'.inv_h($row['BaseUnit']).'</td><td>'.inv_h($row['OpeningQty']).'</td><td>'.inv_h($row['PurchaseQty']).'</td><td>'.inv_h($usageQty).'</td><td>'.inv_h($row['WasteQty']).'</td><td>'.inv_h($adjustmentQty).'</td><td>'.inv_h($row['ClosingBalance']).'</td><td>'.inv_h($row['CurrentBalance']).'</td><td>'.inv_h($row['Variance']).'</td><td>'.inv_h($row['CurrentStockValue']).'</td></tr>'; } ?>
+        </table>
+    </div>
+</main>
+<footer class="kx-footer">Powered by Kynix Technologies</footer>
+<script>
+(function(){
+    var generated=document.getElementById('kxGeneratedAt');
+    if(generated){ generated.innerHTML=new Date().toLocaleString(); }
+    var menuBtn=document.getElementById('kxMenuBtn'), nav=document.getElementById('kxNav');
+    if(menuBtn&&nav){ menuBtn.onclick=function(){ nav.classList.toggle('open'); }; }
+    var themeBtn=document.getElementById('kxThemeToggle');
+    var savedTheme=localStorage.getItem('kxTheme');
+    if(savedTheme==='dark'){ document.body.classList.add('kx-dark-mode'); }
+    function setThemeText(){
+        if(themeBtn){ themeBtn.innerHTML=document.body.classList.contains('kx-dark-mode')?'Light':'Dark'; }
+    }
+    setThemeText();
+    if(themeBtn){
+        themeBtn.onclick=function(){
+            document.body.classList.toggle('kx-dark-mode');
+            var dark=document.body.classList.contains('kx-dark-mode');
+            localStorage.setItem('kxTheme',dark?'dark':'light');
+            setThemeText();
+        };
+    }
+})();
+
+var invSortDirection={};
+var invCurrentPage=1;
+
+function invParseNumber(value){
+    if(!value){ return 0; }
+    return parseFloat(String(value).replace(/Rs\./gi,'').replace(/,/g,'').trim())||0;
 }
+
+function invMainRows(){
+    return Array.prototype.slice.call(document.querySelectorAll('#invTableBody tr.inv-main-row'));
+}
+
+function invCloseDetail(row){
+    var next=row.nextElementSibling;
+    if(next && next.classList.contains('inv-ledger')){
+        next.classList.remove('open');
+        next.style.display='none';
+    }
+}
+
+function invApplyTableState(){
+    var search=document.getElementById('invTableSearch');
+    var q=search ? (search.value||'').toLowerCase() : '';
+    var pageSizeEl=document.getElementById('invPageSize');
+    var pageSize=pageSizeEl ? parseInt(pageSizeEl.value,10) : 25;
+    var rows=invMainRows();
+    var matched=[];
+    rows.forEach(function(row){
+        var ok=(row.getAttribute('data-search')||'').indexOf(q)>-1;
+        row.setAttribute('data-filtered',ok?'1':'0');
+        invCloseDetail(row);
+        if(ok){ matched.push(row); }
+    });
+    var totalPages=Math.max(1,Math.ceil(matched.length/pageSize));
+    if(invCurrentPage>totalPages){ invCurrentPage=totalPages; }
+    var start=(invCurrentPage-1)*pageSize;
+    var end=start+pageSize;
+    rows.forEach(function(row){
+        var ok=row.getAttribute('data-filtered')==='1';
+        var idx=matched.indexOf(row);
+        row.style.display=(ok && idx>=start && idx<end)?'':'none';
+    });
+    document.querySelectorAll('.inv-mobile-cards .inv-card').forEach(function(card){
+        card.style.display=(card.getAttribute('data-search')||'').indexOf(q)>-1?'':'none';
+    });
+    var visibleCount=document.getElementById('invVisibleCount');
+    if(visibleCount){ visibleCount.innerHTML=matched.length; }
+    var pageInfo=document.getElementById('invPageInfo');
+    if(pageInfo){
+        var first=matched.length===0?0:start+1;
+        var last=Math.min(end,matched.length);
+        pageInfo.innerHTML='Showing '+first+'-'+last+' of '+matched.length+' results';
+    }
+    var prev=document.getElementById('invPrevPage'), next=document.getElementById('invNextPage');
+    if(prev){ prev.disabled=invCurrentPage<=1; }
+    if(next){ next.disabled=invCurrentPage>=totalPages; }
+}
+
+function invSortTable(columnIndex){
+    var tbody=document.getElementById('invTableBody');
+    if(!tbody){ return; }
+    var rows=invMainRows();
+    var direction=invSortDirection[columnIndex]==='asc'?'desc':'asc';
+    invSortDirection[columnIndex]=direction;
+    rows.sort(function(a,b){
+        var av=a.cells[columnIndex].innerText.trim();
+        var bv=b.cells[columnIndex].innerText.trim();
+        var an=invParseNumber(av), bn=invParseNumber(bv);
+        var bothNumeric=!isNaN(an)&&!isNaN(bn)&&(columnIndex>=4);
+        if(bothNumeric){ return direction==='asc'?an-bn:bn-an; }
+        return direction==='asc'?av.localeCompare(bv):bv.localeCompare(av);
+    });
+    rows.forEach(function(row){
+        var detail=row.nextElementSibling;
+        tbody.appendChild(row);
+        if(detail && detail.classList.contains('inv-ledger')){ tbody.appendChild(detail); }
+    });
+    invCurrentPage=1;
+    invApplyTableState();
+}
+
+function invToggleTarget(targetId, button){
+    var row=document.getElementById(targetId);
+    if(!row){ return; }
+    var open=row.classList.toggle('open');
+    row.style.display=open?'table-row':'none';
+    if(button){ button.innerHTML=open?'Hide':'Details'; }
+}
+
 document.addEventListener('DOMContentLoaded',function(){
-document.querySelectorAll('.inv-expand').forEach(function(btn){
+    document.querySelectorAll('.inv-detail-btn[data-target]').forEach(function(btn){
+        btn.addEventListener('click',function(){ invToggleTarget(btn.getAttribute('data-target'),btn); });
+    });
+    document.querySelectorAll('.inv-mobile-detail-toggle').forEach(function(btn){
         btn.addEventListener('click',function(){
-            var row=document.getElementById(btn.getAttribute('data-target'));
-            var open=row.classList.toggle('open');
-            row.style.display=open?'table-row':'none';
-            btn.textContent=open?'-':'+';
+            var panel=btn.parentNode.querySelector('.inv-card-details');
+            if(!panel){ return; }
+            var open=panel.classList.toggle('open');
+            btn.innerHTML=open?'Hide Details':'View Details';
         });
     });
     var search=document.getElementById('invTableSearch');
-    if(search) search.addEventListener('input',invFilterRows);
+    if(search){ search.addEventListener('input',function(){ invCurrentPage=1; invApplyTableState(); }); }
+    var pageSize=document.getElementById('invPageSize');
+    if(pageSize){ pageSize.addEventListener('change',function(){ invCurrentPage=1; invApplyTableState(); }); }
+    var prev=document.getElementById('invPrevPage'), next=document.getElementById('invNextPage');
+    if(prev){ prev.addEventListener('click',function(){ invCurrentPage--; invApplyTableState(); }); }
+    if(next){ next.addEventListener('click',function(){ invCurrentPage++; invApplyTableState(); }); }
+    invApplyTableState();
 });
+
+function invEscape(text){
+    return String(text||'').replace(/[&<>'\"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','\"':'&quot;'}[c];});
+}
+
+function invCleanTableHtml(tableId){
+    var table=document.getElementById(tableId);
+    if(!table){ return ''; }
+    var clone=table.cloneNode(true);
+    clone.querySelectorAll('.inv-ledger,.inv-sold-group').forEach(function(row){ row.parentNode.removeChild(row); });
+    clone.querySelectorAll('button').forEach(function(btn){ btn.parentNode.removeChild(btn); });
+    clone.removeAttribute('id');
+    return clone.outerHTML;
+}
+
+function invMetricRows(){
+    var rows='';
+    document.querySelectorAll('.kx-stat-card').forEach(function(card){
+        var label=(card.querySelector('span')||{}).innerText||'';
+        var value=(card.querySelector('strong')||{}).innerText||'';
+        if(label && value){ rows+='<tr><td>'+invEscape(label)+'</td><td class="right">'+invEscape(value)+'</td></tr>'; }
+    });
+    return rows;
+}
+
+function kxExportInventoryPdf(){
+    var title='Inventory Analytics';
+    var period='<?php echo inv_h($fromInput); ?> 06:00 to <?php echo inv_h(date('Y-m-d', strtotime('+1 day', $toTs))); ?> 06:00';
+    var html='<!DOCTYPE html><html><head><meta charset="UTF-8"><title>'+title+'</title><style>'+
+    '@page{size:A4 landscape;margin:10mm}body{font-family:Arial,Helvetica,sans-serif;color:#111827;font-size:10px}.pdf-header{display:flex;justify-content:space-between;align-items:center;border-bottom:3px solid #0f172a;padding-bottom:10px;margin-bottom:12px}.pdf-header h1{margin:0;font-size:20px}.pdf-header p{margin:4px 0 0;color:#64748b}.section{margin-top:12px;page-break-inside:avoid}.section h2{font-size:13px;margin:0 0 7px;border-left:4px solid #2563eb;padding-left:7px}.kx-table,.report-table{width:100%;border-collapse:collapse}.kx-table th,.report-table th{background:#0f172a;color:#fff;text-align:left;padding:6px;border:1px solid #0f172a}.kx-table td,.report-table td{padding:5px;border:1px solid #e5e7eb}.kx-num,.kx-money,.right{text-align:right}.print-actions{position:fixed;top:10px;right:10px}.print-actions button{background:#2563eb;color:#fff;border:0;border-radius:8px;padding:10px 14px;font-weight:700}@media print{.print-actions{display:none}}'+
+    '</style></head><body><div class="print-actions"><button onclick="window.print()">Save / Print PDF</button></div><div class="pdf-header"><div><h1>'+title+'</h1><p>'+invEscape(period)+'</p></div><div>Generated: '+invEscape(new Date().toLocaleString())+'</div></div>'+
+    '<div class="section"><h2>Summary</h2><table class="report-table">'+invMetricRows()+'</table></div>'+
+    '<div class="section"><h2>Inventory Stock Position</h2>'+invCleanTableHtml('inventoryTable')+'</div>'+
+    '<div class="section"><h2>Sold Items &amp; Recipe Usage</h2>'+invCleanTableHtml('soldUsageTable')+'</div></body></html>';
+    var win=window.open('','_blank');
+    if(!win){ alert('Please allow popups to export PDF.'); return; }
+    win.document.open();
+    win.document.write(html);
+    win.document.close();
+    setTimeout(function(){ win.focus(); win.print(); },700);
+}
 </script>
 </body>
 </html>
