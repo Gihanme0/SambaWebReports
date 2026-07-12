@@ -6,6 +6,7 @@ function inv_h($value) { return htmlspecialchars((string)$value, ENT_QUOTES, 'UT
 function inv_num($value, $decimals = 3) { return number_format((float)$value, $decimals); }
 function inv_money($value) { return 'Rs. ' . number_format((float)$value, 2); }
 function inv_bool($name, $default = false) { return isset($_GET[$name]) ? ($_GET[$name] === '1') : $default; }
+function inv_value($row, $key, $default = 0) { return isset($row[$key]) ? $row[$key] : $default; }
 
 $today = date('Y-m-d');
 $fromInput = isset($_GET['fromDate']) && $_GET['fromDate'] !== '' ? trim($_GET['fromDate']) : $today;
@@ -224,7 +225,6 @@ Opening AS (
     SELECT ItemCode, SUM(NetQty) AS OpeningQty
     FROM UnifiedLedger
     WHERE Date < @StartDate
-      AND (@MovementType IS NULL OR MovementClass = @MovementType)
     GROUP BY ItemCode
 ),
 PeriodAgg AS (
@@ -333,8 +333,19 @@ DECLARE @StartDate datetime = ?;
 DECLARE @EndDate datetime = ?;
 DECLARE @WarehouseId int = ?;
 DECLARE @ItemId int = ?;
+DECLARE @GroupCode nvarchar(100) = ?;
+DECLARE @Search nvarchar(120) = ?;
 
-WITH TxExpanded AS (
+WITH Items AS (
+    SELECT
+        ii.Id AS ItemCode,
+        ii.Name AS ItemName
+    FROM InventoryItems ii
+    WHERE (@ItemId IS NULL OR ii.Id = @ItemId)
+      AND (@GroupCode IS NULL OR ISNULL(NULLIF(ii.GroupCode,''),'Ungrouped') = @GroupCode)
+      AND (@Search IS NULL OR @Search = '' OR CAST(ii.Id AS nvarchar(20)) LIKE '%' + @Search + '%' OR ii.Name LIKE '%' + @Search + '%' OR ISNULL(ii.GroupCode,'') LIKE '%' + @Search + '%')
+),
+TxExpanded AS (
     SELECT it.InventoryItem_Id AS ItemCode, it.Date, it.TargetWarehouseId AS WarehouseId,
            CAST(CASE WHEN it.Multiplier = 0 THEN it.Quantity ELSE it.Quantity * it.Multiplier END AS decimal(18,6)) AS Qty,
            itt.Name AS TransactionTypeName, itd.Name AS DocumentName, itd.Description,
@@ -395,17 +406,16 @@ UnifiedLedger AS (
     FROM RecipeUsage
 )
 SELECT
-    ul.ItemCode, ii.Name AS ItemName, ul.Date, ul.MovementClass, ISNULL(w.Name,'') AS Warehouse,
+    ul.ItemCode, i.ItemName, ul.Date, ul.MovementClass, ISNULL(w.Name,'') AS Warehouse,
     ul.QtyIn, ul.QtyOut, ul.NetQty, ul.TransactionType, ul.Reference, ul.DocumentText, ul.SourceTable, ul.SourceId
 FROM UnifiedLedger ul
-JOIN InventoryItems ii ON ii.Id = ul.ItemCode
+JOIN Items i ON i.ItemCode = ul.ItemCode
 LEFT JOIN Warehouses w ON w.Id = ul.WarehouseId
 WHERE ul.Date >= @StartDate AND ul.Date < @EndDate
-  AND (@ItemId IS NULL OR ul.ItemCode = @ItemId)
 ORDER BY ul.ItemCode, ul.Date, ul.SourceTable, ul.SourceId;
 ";
 
-$ledger = inv_fetch_all($conn, $ledgerSql, array($startDate, $endDate, $warehouseId, $itemId));
+$ledger = inv_fetch_all($conn, $ledgerSql, array($startDate, $endDate, $warehouseId, $itemId, $groupCode, $search));
 if ($ledger['error']) {
     $errors[] = $ledger['error'];
 } else {
@@ -521,7 +531,7 @@ if ($exportMode === 'excel') {
 
     <?php foreach ($errors as $error) { ?><section class="kx-alert kx-alert-error"><?php echo inv_h($error); ?></section><?php } ?>
     <section class="kx-alert">
-        DB profile: InventoryItems <?php echo inv_h($profileRow['InventoryItems'] ?? 0); ?>, InventoryTransactions <?php echo inv_h($profileRow['InventoryTransactions'] ?? 0); ?>, Recipes <?php echo inv_h($profileRow['Recipes'] ?? 0); ?>, RecipeItems <?php echo inv_h($profileRow['RecipeItems'] ?? 0); ?>. Current balance is calculated from ledger history, not from empty snapshot tables.
+        DB profile: InventoryItems <?php echo inv_h(inv_value($profileRow, 'InventoryItems')); ?>, InventoryTransactions <?php echo inv_h(inv_value($profileRow, 'InventoryTransactions')); ?>, Recipes <?php echo inv_h(inv_value($profileRow, 'Recipes')); ?>, RecipeItems <?php echo inv_h(inv_value($profileRow, 'RecipeItems')); ?>. Current balance is calculated from ledger history, not from empty snapshot tables.
     </section>
 
     <section class="kx-panel kx-filter-panel inv-filter">
