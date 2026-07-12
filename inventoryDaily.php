@@ -8,7 +8,7 @@ function inv_money($value) { return 'Rs. ' . number_format((float)$value, 2); }
 function inv_bool($name, $default = false) { return isset($_GET[$name]) ? ($_GET[$name] === '1') : $default; }
 function inv_value($row, $key, $default = 0) { return isset($row[$key]) ? $row[$key] : $default; }
 function inv_date_value($value) { return $value instanceof DateTime ? $value->format('Y-m-d H:i:s') : (string)$value; }
-function inv_icon($name) { return '<span class="inv-icon glyphicon glyphicon-' . inv_h($name) . '" aria-hidden="true"></span>'; }
+function inv_icon($name) { return '<span class="inv-icon inv-icon-' . inv_h($name) . '" aria-hidden="true"></span>'; }
 
 $today = date('Y-m-d');
 $fromInput = isset($_GET['fromDate']) && $_GET['fromDate'] !== '' ? trim($_GET['fromDate']) : $today;
@@ -577,6 +577,27 @@ uasort($topSoldMenu, function($a, $b) {
 });
 $topSoldKey = '';
 foreach ($topSoldMenu as $topKey => $topValue) { $topSoldKey = $topKey; break; }
+$riskItems = (int)$summary['negative_stock'] + (int)$summary['low_stock'];
+$riskPercent = $summary['total_items'] > 0 ? round(($riskItems / $summary['total_items']) * 100, 1) : 0;
+$movementPercent = $summary['total_items'] > 0 ? round(($summary['items_used'] / $summary['total_items']) * 100, 1) : 0;
+$valueDelta = (float)$summary['current_value'] - (float)$summary['opening_value'];
+$flowBalance = $chartIn - $chartOut;
+$flowBalanceLabel = $flowBalance >= 0 ? 'Net stock gain' : 'Net stock drain';
+$topUsageQty = !empty($topUsage) ? ((float)$topUsage[0]['RecipeUsageQty'] + (float)$topUsage[0]['DirectUsageQty']) : 0;
+$topSoldQty = 0;
+foreach ($topSoldMenu as $topSoldValue) {
+    $topSoldQty = (float)$topSoldValue['sold_qty'];
+    break;
+}
+$topGroupLabel = 'No stock value';
+$topGroupValue = 0;
+foreach ($valueByGroup as $groupName => $groupValue) {
+    $topGroupLabel = $groupName;
+    $topGroupValue = $groupValue;
+    break;
+}
+$ownerHeadline = $riskItems > 0 ? number_format($riskItems) . ' inventory items need attention' : 'Inventory is operationally stable';
+$ownerSubline = $riskItems > 0 ? 'Review negative and low-stock items before the next service period.' : 'No negative or low-stock exceptions are visible in the selected scope.';
 
 $selectedWarehouseName = '';
 foreach ($warehouses as $w) {
@@ -667,48 +688,85 @@ if ($exportMode === 'excel') {
     <script type="text/javascript" src="./bootstrap/js/bootstrap.min.js"></script>
     <script type="text/javascript" src="./js/bootstrap-datetimepicker.js" charset="UTF-8"></script>
 <style>
-        .kx-inventory-page .kx-shell{width:min(1320px,calc(100% - 36px))}
+        .kx-inventory-page{background:#f6f8fb;color:#111827}
+        .kx-inventory-page .kx-shell{width:min(1360px,calc(100% - 40px));padding-bottom:36px}
         .inv-print-title{display:none}
-        .inv-hero-meta{display:grid;gap:7px;text-align:right}
-        .inv-hero-meta span{display:block;color:#bfdbfe;font-size:12px}
-        .inv-hero-meta strong{display:block;color:#fff;font-size:13px}
-        .inv-icon{display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;margin-right:7px;font-size:12px;vertical-align:-2px}
+        .inv-icon{display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;margin-right:7px;vertical-align:-3px}
+        .inv-icon:before{content:"";display:block;width:10px;height:10px;border-radius:3px;background:currentColor;opacity:.82}
+        .inv-icon-warning-sign:before,.inv-icon-flag:before{border-radius:999px;background:#dc2626}
+        .inv-icon-download-alt:before,.inv-icon-search:before,.inv-icon-print:before,.inv-icon-file:before{background:#2563eb}
         .kx-btn .inv-icon{margin-right:8px}
+        .inv-command-center{display:grid;grid-template-columns:minmax(0,1.45fr) minmax(360px,.95fr);gap:20px;margin:22px 0 18px}
+        .inv-executive-card,.inv-control-card,.inv-insight-card,.inv-density-panel{background:#fff;border:1px solid #e5eaf2;border-radius:18px;box-shadow:0 18px 45px rgba(15,23,42,.07)}
+        .inv-executive-card{padding:28px;display:flex;flex-direction:column;justify-content:space-between;min-height:300px;background:linear-gradient(135deg,#0f172a 0%,#1e3a8a 58%,#0f766e 100%);color:#fff;overflow:hidden;position:relative}
+        .inv-executive-card:after{content:"";position:absolute;right:-80px;top:-80px;width:230px;height:230px;border:1px solid rgba(255,255,255,.18);border-radius:50%}
+        .inv-eyebrow{font-size:11px;font-weight:900;letter-spacing:.12em;text-transform:uppercase;color:#bfdbfe;margin-bottom:10px}
+        .inv-executive-card h1{margin:0;max-width:760px;font-size:38px;line-height:1.08;font-weight:900;color:#fff;letter-spacing:0}
+        .inv-executive-card p{margin:14px 0 0;max-width:690px;color:#dbeafe;font-size:15px;line-height:1.5}
+        .inv-hero-meta{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-top:30px;position:relative;z-index:1}
+        .inv-hero-meta div{border:1px solid rgba(255,255,255,.18);background:rgba(255,255,255,.08);border-radius:14px;padding:13px}
+        .inv-hero-meta span,.inv-control-meta span{display:block;color:#bfdbfe;font-size:11px;font-weight:900;text-transform:uppercase}
+        .inv-hero-meta strong,.inv-control-meta strong{display:block;color:#fff;font-size:13px;margin-top:4px}
+        .inv-control-card{padding:22px;display:flex;flex-direction:column;gap:18px}
+        .inv-control-head{display:flex;justify-content:space-between;gap:16px;align-items:flex-start}
+        .inv-control-head h2{margin:0;color:#0f172a;font-size:18px;font-weight:900}
+        .inv-control-head p{margin:5px 0 0;color:#64748b;font-size:13px;font-weight:700}
+        .inv-control-meta{display:grid;gap:10px}
+        .inv-control-meta div{background:#0f172a;border-radius:14px;padding:12px}
+        .inv-control-card .kx-theme-toggle{align-self:flex-start;border:1px solid #cbd5e1;background:#fff;color:#0f172a;border-radius:999px;height:34px;padding:0 14px;font-weight:900}
+        .inv-action-stack{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+        .inv-action-stack .kx-btn{width:100%;justify-content:center}
+        .inv-filter-panel{padding:0;overflow:hidden}
+        .inv-filter-summary{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:18px 22px;cursor:pointer;font-weight:900;color:#0f172a;list-style:none}
+        .inv-filter-summary::-webkit-details-marker{display:none}
+        .inv-filter-summary span{color:#64748b;font-size:12px;font-weight:800}
+        .inv-filter-body{border-top:1px solid #e5eaf2;padding:20px 22px 22px}
         .inv-filter-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;align-items:end}
-        .inv-field label,.inv-checks-title{display:block;font-weight:800;color:#334155;margin-bottom:7px}
-        .inv-field .form-control,.inv-field select{height:44px;border:1px solid #d1d5db;border-radius:12px;box-shadow:none;font-weight:700;color:#111827;background:#fff}
-        .inv-field .form-control:focus,.inv-field select:focus,.inv-page-size:focus{border-color:#2563eb;box-shadow:0 0 0 4px rgba(37,99,235,.12);outline:0}
-        .inv-checks{display:grid;grid-template-columns:1fr 1fr;gap:8px;background:#f8fafc;border:1px solid #e5e7eb;border-radius:14px;padding:12px}
+        .inv-field label,.inv-checks-title{display:block;font-weight:900;color:#334155;margin-bottom:7px;font-size:12px}
+        .inv-field .form-control,.inv-field select{height:42px;border:1px solid #d7dde7;border-radius:10px;box-shadow:none;font-weight:700;color:#111827;background:#fff}
+        .inv-field .form-control:focus,.inv-field select:focus,.inv-page-size:focus{border-color:#2563eb;box-shadow:0 0 0 3px rgba(37,99,235,.13);outline:0}
+        .inv-checks{display:grid;grid-template-columns:1fr 1fr;gap:8px;background:#f8fafc;border:1px solid #e5eaf2;border-radius:12px;padding:11px}
         .inv-checks label{display:flex;align-items:center;gap:7px;margin:0;color:#334155;font-weight:800;font-size:12px}
-        .inv-actions{grid-column:1 / -1;display:flex;gap:10px;flex-wrap:wrap}
-        .inv-chip-row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:15px;padding-top:15px;border-top:1px solid #e5e7eb}
+        .inv-actions{grid-column:1 / -1;display:flex;gap:10px;flex-wrap:wrap;justify-content:flex-end}
+        .inv-chip-row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:15px;padding-top:15px;border-top:1px solid #e5eaf2}
         .inv-chip{background:#eef2ff;color:#3730a3;border-radius:999px;padding:7px 11px;font-size:12px;font-weight:900}
         .inv-result-count{margin-left:auto;color:#64748b;font-weight:900}
-        .inv-primary-stats{grid-template-columns:repeat(6,1fr)}
-        .inv-secondary-stats{grid-template-columns:repeat(4,1fr)}
-        .kx-inventory-page .kx-stat-card{min-height:150px;display:flex;flex-direction:column;justify-content:flex-start}
-        .kx-inventory-page .kx-stat-card:before{width:68px;height:68px;right:-22px;top:-22px;opacity:.72}
-        .kx-inventory-page .kx-stat-icon{font-size:16px;color:#2563eb}
-        .inv-stat-help{display:block;margin-top:auto;padding-top:8px;color:#94a3b8;font-size:11px;font-weight:800}
-        .inv-stat-danger strong,.inv-negative{color:#dc2626!important}
+        .inv-owner-grid{display:grid;grid-template-columns:1.15fr .85fr .85fr .85fr;gap:16px;margin:18px 0}
+        .inv-kpi{background:#fff;border:1px solid #e5eaf2;border-radius:16px;padding:18px;box-shadow:0 12px 34px rgba(15,23,42,.06);min-height:150px}
+        .inv-kpi-primary{background:#fff;border-left:5px solid #2563eb}
+        .inv-kpi span{display:block;color:#64748b;font-size:11px;font-weight:900;text-transform:uppercase}
+        .inv-kpi strong{display:block;color:#0f172a;font-size:28px;line-height:1.1;margin-top:9px;font-weight:900}
+        .inv-kpi-primary strong{font-size:38px}
+        .inv-kpi em{display:block;margin-top:10px;color:#64748b;font-style:normal;font-weight:800;font-size:12px}
+        .inv-negative,.inv-stat-danger strong{color:#dc2626!important}
         .inv-low{color:#b45309!important}
         .inv-zero{color:#64748b!important}
-        .inv-chart-grid{display:grid;grid-template-columns:1.2fr 1fr 1fr;gap:20px;margin-bottom:20px}
+        .inv-metric-strip{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:#e5eaf2;border:1px solid #e5eaf2;border-radius:16px;overflow:hidden;margin:0 0 20px}
+        .inv-metric-strip div{background:#fff;padding:15px 16px}
+        .inv-metric-strip span{display:block;color:#64748b;font-size:11px;font-weight:900;text-transform:uppercase}
+        .inv-metric-strip strong{display:block;margin-top:5px;color:#0f172a;font-size:18px;font-weight:900}
+        .inv-insight-grid{display:grid;grid-template-columns:1.1fr .9fr;gap:18px;margin-bottom:20px}
+        .inv-insight-card{padding:20px}
+        .inv-section-label{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;margin-bottom:14px}
+        .inv-section-label h2{margin:0;color:#0f172a;font-size:18px;font-weight:900}
+        .inv-section-label p{margin:4px 0 0;color:#64748b;font-size:13px;font-weight:700}
+        .inv-section-label span{color:#2563eb;font-size:11px;font-weight:900;text-transform:uppercase}
+        .inv-chart-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:18px;margin-bottom:20px}
         .inv-chart-grid .kx-chart-panel{margin-bottom:0}
         .inv-chart-wide{grid-column:span 2}
-        .inv-lite-bar{margin:13px 0}
+        .inv-lite-bar{margin:12px 0}
         .inv-lite-label{display:flex;justify-content:space-between;gap:12px;align-items:center;margin-bottom:7px}
-        .inv-lite-label strong{color:#0f172a;font-size:13px}
+        .inv-lite-label strong{color:#0f172a;font-size:13px;font-weight:900}
         .inv-lite-label span{color:#64748b;font-weight:900;font-size:12px;text-align:right}
-        .inv-lite-track{height:12px;border-radius:999px;background:#e5e7eb;overflow:hidden}
-        .inv-lite-fill{height:100%;border-radius:999px;background:linear-gradient(90deg,#2563eb,#60a5fa)}
-        .inv-lite-fill.inv-in{background:linear-gradient(90deg,#16a34a,#86efac)}
-        .inv-lite-fill.inv-out{background:linear-gradient(90deg,#dc2626,#fca5a5)}
-        .inv-lite-fill.inv-value{background:linear-gradient(90deg,#0f172a,#64748b)}
+        .inv-lite-track{height:10px;border-radius:999px;background:#e5e7eb;overflow:hidden}
+        .inv-lite-fill{height:100%;border-radius:999px;background:#2563eb}
+        .inv-lite-fill.inv-in{background:#16a34a}
+        .inv-lite-fill.inv-out{background:#dc2626}
+        .inv-lite-fill.inv-value{background:#0f766e}
         .inv-health{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
-        .inv-health div{border-radius:14px;padding:14px;background:#f8fafc;text-align:center;border:1px solid #e5e7eb}
+        .inv-health div{border-radius:14px;padding:14px;background:#f8fafc;text-align:center;border:1px solid #e5eaf2}
         .inv-health span{display:block;color:#64748b;font-weight:900;font-size:11px;text-transform:uppercase}
-        .inv-health strong{display:block;font-size:24px;color:#0f172a;margin-top:5px}
+        .inv-health strong{display:block;font-size:26px;color:#0f172a;margin-top:5px}
         .inv-table-meta{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
         .inv-page-size{height:42px;border:1px solid #d1d5db;border-radius:12px;padding:0 10px;font-weight:800;background:#fff}
         .inv-badge{display:inline-block;border-radius:999px;padding:6px 9px;font-size:11px;font-weight:900;white-space:nowrap}
@@ -762,44 +820,80 @@ if ($exportMode === 'excel') {
         .inv-pagination button{height:40px;border:0;border-radius:10px;background:#0f172a;color:#fff;font-weight:900;padding:0 14px}
         .inv-pagination button:disabled{background:#cbd5e1;color:#64748b}
         .inv-hidden-export{display:none}
+        body.kx-dark-mode .inv-executive-card,body.kx-dark-mode .inv-control-card,body.kx-dark-mode .inv-insight-card,body.kx-dark-mode .inv-density-panel,body.kx-dark-mode .inv-kpi,body.kx-dark-mode .inv-metric-strip div{background:#111827;border-color:#1e293b;color:#e5e7eb}
+        body.kx-dark-mode .inv-control-head h2,body.kx-dark-mode .inv-filter-summary,body.kx-dark-mode .inv-kpi strong,body.kx-dark-mode .inv-metric-strip strong,body.kx-dark-mode .inv-section-label h2{color:#f8fafc}
         body.kx-dark-mode .inv-field .form-control,body.kx-dark-mode .inv-field select,body.kx-dark-mode .inv-page-size{background:#020617;border-color:#334155;color:#e5e7eb}
-        body.kx-dark-mode .inv-checks,body.kx-dark-mode .inv-health div,body.kx-dark-mode .inv-detail-grid div,body.kx-dark-mode .inv-card,body.kx-dark-mode .inv-ledger,body.kx-dark-mode .inv-sold-group,body.kx-dark-mode .inv-sold-card,body.kx-dark-mode .inv-card-ledger{background:#111827;border-color:#1e293b;color:#e5e7eb}
+        body.kx-dark-mode .inv-filter-body,body.kx-dark-mode .inv-checks,body.kx-dark-mode .inv-health div,body.kx-dark-mode .inv-detail-grid div,body.kx-dark-mode .inv-card,body.kx-dark-mode .inv-ledger,body.kx-dark-mode .inv-sold-group,body.kx-dark-mode .inv-sold-card,body.kx-dark-mode .inv-card-ledger{background:#111827;border-color:#1e293b;color:#e5e7eb}
         body.kx-dark-mode .inv-field label,body.kx-dark-mode .inv-checks-title,body.kx-dark-mode .inv-checks label,body.kx-dark-mode .inv-lite-label strong,body.kx-dark-mode .inv-health strong,body.kx-dark-mode .inv-detail-grid strong,body.kx-dark-mode .inv-card h3,body.kx-dark-mode .inv-card dd,body.kx-dark-mode .inv-sold-card h3,body.kx-dark-mode .inv-sold-card dd,body.kx-dark-mode .inv-card-details p strong,body.kx-dark-mode .inv-card-ledger strong,body.kx-dark-mode .inv-card-ledger p b{color:#f8fafc}
         body.kx-dark-mode .inv-lite-track{background:#1e293b}
         body.kx-dark-mode .inv-card-details,body.kx-dark-mode .inv-chip-row,.kx-dark-mode .inv-pagination{border-color:#1e293b}
-        @media(max-width:1180px){.inv-filter-grid{grid-template-columns:repeat(2,1fr)}.inv-primary-stats{grid-template-columns:repeat(3,1fr)}.inv-chart-grid{grid-template-columns:1fr 1fr}.inv-chart-wide{grid-column:span 1}.inv-detail-grid{grid-template-columns:repeat(3,1fr)}}
-        @media(max-width:768px){.kx-inventory-page .kx-shell{width:calc(100% - 24px)}.inv-filter-grid,.inv-primary-stats,.inv-secondary-stats,.inv-chart-grid{grid-template-columns:1fr}.inv-checks{grid-template-columns:1fr}.inv-actions{display:grid;grid-template-columns:1fr}.inv-actions .kx-btn{width:100%}.inv-result-count{margin-left:0;width:100%}.inv-desktop-table{display:none}.inv-mobile-cards{display:grid;gap:12px}.inv-table-meta{display:block}.inv-table-meta .kx-search-wrap input{margin-bottom:10px}.inv-detail-grid{grid-template-columns:1fr 1fr}.inv-hero-meta{text-align:left}.inv-pagination{display:none}.inv-sold-desktop{display:none}.inv-sold-mobile{display:grid;gap:12px;padding:16px}.inv-sold-card .inv-detail-btn{width:100%;margin-top:12px}.kx-inventory-page .kx-stat-card{min-height:0}}
-        @media(max-width:520px){.inv-detail-grid,.inv-card dl,.inv-health{grid-template-columns:1fr}.kx-hero h1{font-size:22px}}
-        @media print{.kx-topbar,.kx-filter-panel,.inv-actions,.kx-search-wrap,.inv-pagination,.inv-detail-btn,.inv-charts,.inv-chart-grid,.inv-mobile-cards,.inv-sold-mobile{display:none!important}.inv-print-title{display:block;border-bottom:3px solid #0f172a;margin-bottom:12px;padding-bottom:8px}.kx-inventory-page .kx-shell{width:100%;margin:0}.inv-desktop-table{display:block!important}.inv-ledger{display:none!important}.kx-table{font-size:9.5px;border-collapse:collapse}.kx-table thead{display:table-header-group}.kx-table tbody td,.kx-table thead th{padding:6px;border:1px solid #e5e7eb}.kx-panel,.kx-stat-card{break-inside:avoid;box-shadow:none!important}.kx-footer:after{content:'  |  Page ' counter(page)}@page{size:A4 landscape;margin:9mm}}
+        @media(max-width:1180px){.inv-command-center,.inv-insight-grid{grid-template-columns:1fr}.inv-owner-grid{grid-template-columns:1fr 1fr}.inv-filter-grid{grid-template-columns:repeat(2,1fr)}.inv-chart-grid{grid-template-columns:1fr 1fr}.inv-chart-wide{grid-column:span 1}.inv-detail-grid{grid-template-columns:repeat(3,1fr)}}
+        @media(max-width:768px){.kx-inventory-page .kx-shell{width:calc(100% - 24px)}.inv-executive-card{padding:22px;min-height:0}.inv-executive-card h1{font-size:28px}.inv-hero-meta,.inv-owner-grid,.inv-metric-strip,.inv-filter-grid,.inv-chart-grid{grid-template-columns:1fr}.inv-checks{grid-template-columns:1fr}.inv-action-stack,.inv-actions{display:grid;grid-template-columns:1fr}.inv-actions .kx-btn{width:100%}.inv-result-count{margin-left:0;width:100%}.inv-desktop-table{display:none}.inv-mobile-cards{display:grid;gap:12px}.inv-table-meta{display:block}.inv-table-meta .kx-search-wrap input{margin-bottom:10px}.inv-detail-grid{grid-template-columns:1fr 1fr}.inv-pagination{display:none}.inv-sold-desktop{display:none}.inv-sold-mobile{display:grid;gap:12px;padding:16px}.inv-sold-card .inv-detail-btn{width:100%;margin-top:12px}.kx-inventory-page .kx-stat-card{min-height:0}}
+        @media(max-width:520px){.inv-detail-grid,.inv-card dl,.inv-health{grid-template-columns:1fr}.inv-filter-summary{align-items:flex-start;flex-direction:column}.inv-executive-card h1{font-size:24px}}
+        @media print{.kx-topbar,.inv-filter-panel,.inv-actions,.kx-search-wrap,.inv-pagination,.inv-detail-btn,.inv-charts,.inv-chart-grid,.inv-mobile-cards,.inv-sold-mobile,.inv-control-card{display:none!important}.inv-print-title{display:block;border-bottom:3px solid #0f172a;margin-bottom:12px;padding-bottom:8px}.kx-inventory-page .kx-shell{width:100%;margin:0}.inv-command-center,.inv-owner-grid,.inv-insight-grid,.inv-metric-strip{display:block}.inv-executive-card,.inv-kpi,.inv-metric-strip div,.inv-insight-card{box-shadow:none!important;border:1px solid #d1d5db;margin-bottom:8px;color:#0f172a;background:#fff}.inv-executive-card h1,.inv-executive-card p,.inv-hero-meta strong{color:#0f172a}.inv-desktop-table{display:block!important}.inv-ledger{display:none!important}.kx-table{font-size:9.5px;border-collapse:collapse}.kx-table thead{display:table-header-group}.kx-table tbody td,.kx-table thead th{padding:6px;border:1px solid #e5e7eb}.kx-panel,.kx-stat-card{break-inside:avoid;box-shadow:none!important}.kx-footer:after{content:'  |  Page ' counter(page)}@page{size:A4 landscape;margin:9mm}}
     </style>
 </head>
 <body class="PaginaVanzari kx-page kx-inventory-page">
 <?php include 'header.php'; ?>
 <main class="kx-shell">
     <div class="inv-print-title"><h1>Inventory Analytics</h1><p><?php echo inv_h($fromInput); ?> to <?php echo inv_h($toInput); ?></p></div>
-    <section class="kx-hero">
-        <div>
-            <div class="kx-eyebrow">INVENTORY REPORT</div>
-            <h1>Inventory Analytics</h1>
-            <p>Monitor daily usage, stock movement, closing balance, current balance, and inventory value.</p>
-        </div>
-        <div class="kx-hero-badge inv-hero-meta">
-            <div><span>Generated</span><strong id="kxGeneratedAt">--</strong></div>
-            <div><span>Date Range</span><strong><?php echo inv_h($fromInput); ?> to <?php echo inv_h($toInput); ?></strong></div>
-            <?php if ($selectedWarehouseName !== '') { ?><div><span>Warehouse</span><strong><?php echo inv_h($selectedWarehouseName); ?></strong></div><?php } ?>
-            <button type="button" class="kx-theme-toggle" id="kxThemeToggle" title="Toggle dark mode">Dark</button>
-        </div>
-    </section>
-
     <?php foreach ($errors as $error) { ?><section class="kx-alert kx-alert-error"><?php echo inv_h($error); ?></section><?php } ?>
-    <section class="kx-alert">
-        <span class="kx-dot"></span>
-        Work period: <strong><?php echo inv_h($fromInput); ?> 06:00</strong> to <strong><?php echo inv_h(date('Y-m-d', strtotime('+1 day', $toTs))); ?> 06:00</strong>.
-        Current balance is calculated from ledger history.
+
+    <section class="inv-command-center">
+        <div class="inv-executive-card">
+            <div>
+                <div class="inv-eyebrow">Inventory Control Center</div>
+                <h1><?php echo inv_h($ownerHeadline); ?></h1>
+                <p><?php echo inv_h($ownerSubline); ?> Current stock value is <strong><?php echo inv_money($summary['current_value']); ?></strong> across <?php echo number_format($summary['total_items']); ?> tracked items.</p>
+            </div>
+            <div class="inv-hero-meta">
+                <div><span>Risk exposure</span><strong><?php echo inv_h($riskPercent); ?>% of items</strong></div>
+                <div><span>Movement rate</span><strong><?php echo inv_h($movementPercent); ?>% used</strong></div>
+                <div><span><?php echo inv_h($flowBalanceLabel); ?></span><strong><?php echo inv_num(abs($flowBalance)); ?></strong></div>
+            </div>
+        </div>
+        <aside class="inv-control-card">
+            <div class="inv-control-head">
+                <div>
+                    <h2>Report Scope</h2>
+                    <p><?php echo inv_h($fromInput); ?> 06:00 to <?php echo inv_h(date('Y-m-d', strtotime('+1 day', $toTs))); ?> 06:00</p>
+                </div>
+                <button type="button" class="kx-theme-toggle" id="kxThemeToggle" title="Toggle dark mode">Dark</button>
+            </div>
+            <div class="inv-control-meta">
+                <div><span>Generated</span><strong id="kxGeneratedAt">--</strong></div>
+                <div><span>Warehouse</span><strong><?php echo $selectedWarehouseName !== '' ? inv_h($selectedWarehouseName) : 'All Warehouses'; ?></strong></div>
+                <div><span>Active filters</span><strong><?php echo number_format(count($appliedFilters)); ?> applied</strong></div>
+            </div>
+            <div class="inv-action-stack">
+                <a class="kx-btn kx-btn-success" href="?<?php echo inv_h(http_build_query(array_merge($_GET, array('export'=>'excel')))); ?>"><?php echo inv_icon('download-alt'); ?>Excel</a>
+                <button class="kx-btn kx-btn-danger" type="button" onclick="kxExportInventoryPdf()"><?php echo inv_icon('file'); ?>PDF</button>
+                <button class="kx-btn kx-btn-dark" type="button" onclick="window.print()"><?php echo inv_icon('print'); ?>Print</button>
+                <a class="kx-btn kx-btn-dark" href="inventoryDaily.php"><?php echo inv_icon('refresh'); ?>Reset</a>
+            </div>
+        </aside>
     </section>
 
-    <section class="kx-panel kx-filter-panel">
-        <form method="get" action="inventoryDaily.php">
+    <section class="inv-owner-grid">
+        <div class="inv-kpi inv-kpi-primary"><span>Items needing action</span><strong class="<?php echo $riskItems > 0 ? 'inv-negative' : ''; ?>"><?php echo number_format($riskItems); ?></strong><em><?php echo number_format($summary['negative_stock']); ?> negative, <?php echo number_format($summary['low_stock']); ?> low stock</em></div>
+        <div class="inv-kpi"><span>Current stock value</span><strong><?php echo inv_money($summary['current_value']); ?></strong><em><?php echo $valueDelta >= 0 ? '+' : '-'; ?><?php echo inv_money(abs($valueDelta)); ?> vs opening</em></div>
+        <div class="inv-kpi"><span>Consumption pressure</span><strong><?php echo inv_num($summary['usage_qty']); ?></strong><em><?php echo inv_money($summary['usage_cost']); ?> usage cost</em></div>
+        <div class="inv-kpi"><span>Waste quantity</span><strong class="<?php echo $summary['waste'] > 0 ? 'inv-low' : ''; ?>"><?php echo inv_num($summary['waste']); ?></strong><em><?php echo inv_num($summary['adjustments']); ?> adjusted</em></div>
+    </section>
+
+    <section class="inv-metric-strip">
+        <div><span>Total items</span><strong><?php echo number_format($summary['total_items']); ?></strong></div>
+        <div><span>No movement</span><strong><?php echo number_format($summary['no_movement']); ?></strong></div>
+        <div><span>Purchases</span><strong><?php echo inv_num($summary['purchases']); ?></strong></div>
+        <div><span>Production</span><strong><?php echo inv_num($summary['production']); ?></strong></div>
+    </section>
+
+    <details class="kx-panel inv-filter-panel">
+        <summary class="inv-filter-summary">
+            <strong>Refine analysis</strong>
+            <span><?php echo number_format(count($rows)); ?> results / <?php echo inv_h($filterSummary); ?></span>
+        </summary>
+        <form method="get" action="inventoryDaily.php" class="inv-filter-body">
             <div class="inv-filter-grid">
                 <div class="inv-field"><label>From Date</label><input class="form-control" type="date" name="fromDate" value="<?php echo inv_h($fromInput); ?>"></div>
                 <div class="inv-field"><label>To Date</label><input class="form-control" type="date" name="toDate" value="<?php echo inv_h($toInput); ?>"></div>
@@ -819,11 +913,8 @@ if ($exportMode === 'excel') {
                     </div>
                 </div>
                 <div class="inv-actions">
-                    <button class="kx-btn kx-btn-primary" type="submit"><?php echo inv_icon('search'); ?>Show Report</button>
+                    <button class="kx-btn kx-btn-primary" type="submit"><?php echo inv_icon('search'); ?>Update Dashboard</button>
                     <a class="kx-btn kx-btn-dark" href="inventoryDaily.php"><?php echo inv_icon('refresh'); ?>Reset</a>
-                    <a class="kx-btn kx-btn-success" href="?<?php echo inv_h(http_build_query(array_merge($_GET, array('export'=>'excel')))); ?>"><?php echo inv_icon('download-alt'); ?>Excel</a>
-                    <button class="kx-btn kx-btn-danger" type="button" onclick="kxExportInventoryPdf()"><?php echo inv_icon('file'); ?>PDF</button>
-                    <button class="kx-btn kx-btn-dark" type="button" onclick="window.print()"><?php echo inv_icon('print'); ?>Print</button>
                 </div>
             </div>
             <div class="inv-chip-row">
@@ -831,31 +922,26 @@ if ($exportMode === 'excel') {
                 <span class="inv-result-count"><?php echo number_format(count($rows)); ?> results</span>
             </div>
         </form>
-    </section>
+    </details>
 
-    <section class="kx-stats kx-stats-extended inv-primary-stats">
-        <div class="kx-stat-card"><div class="kx-stat-icon"><?php echo inv_icon('inbox'); ?></div><span>Total Inventory Items</span><strong><?php echo number_format($summary['total_items']); ?></strong><em class="inv-stat-help">Items in scope</em></div>
-        <div class="kx-stat-card"><div class="kx-stat-icon"><?php echo inv_icon('ok-circle'); ?></div><span>Items Used</span><strong><?php echo number_format($summary['items_used']); ?></strong><em class="inv-stat-help">With usage</em></div>
-        <div class="kx-stat-card"><div class="kx-stat-icon"><?php echo inv_icon('stats'); ?></div><span>Usage Quantity</span><strong><?php echo inv_num($summary['usage_qty']); ?></strong><em class="inv-stat-help">Recipe + direct</em></div>
-        <div class="kx-stat-card"><div class="kx-stat-icon"><?php echo inv_icon('usd'); ?></div><span>Current Stock Value</span><strong><?php echo inv_money($summary['current_value']); ?></strong><em class="inv-stat-help">Ledger valuation</em></div>
-        <div class="kx-stat-card inv-stat-danger"><div class="kx-stat-icon"><?php echo inv_icon('warning-sign'); ?></div><span>Negative Stock</span><strong><?php echo number_format($summary['negative_stock']); ?></strong><em class="inv-stat-help">Needs review</em></div>
-        <div class="kx-stat-card"><div class="kx-stat-icon"><?php echo inv_icon('flag'); ?></div><span>Low Stock</span><strong><?php echo number_format($summary['low_stock']); ?></strong><em class="inv-stat-help">Threshold <?php echo inv_num($lowStockThreshold); ?></em></div>
-    </section>
-
-    <section class="kx-stats kx-stats-extended inv-secondary-stats">
-        <div class="kx-stat-card"><div class="kx-stat-icon"><?php echo inv_icon('log-in'); ?></div><span>Opening Stock Value</span><strong><?php echo inv_money($summary['opening_value']); ?></strong></div>
-        <div class="kx-stat-card"><div class="kx-stat-icon"><?php echo inv_icon('log-out'); ?></div><span>Closing Stock Value</span><strong><?php echo inv_money($summary['closing_value']); ?></strong></div>
-        <div class="kx-stat-card"><div class="kx-stat-icon"><?php echo inv_icon('shopping-cart'); ?></div><span>Purchases</span><strong><?php echo inv_num($summary['purchases']); ?></strong></div>
-        <div class="kx-stat-card"><div class="kx-stat-icon"><?php echo inv_icon('trash'); ?></div><span>Waste</span><strong><?php echo inv_num($summary['waste']); ?></strong></div>
-        <div class="kx-stat-card"><div class="kx-stat-icon"><?php echo inv_icon('adjust'); ?></div><span>Adjustments</span><strong><?php echo inv_num($summary['adjustments']); ?></strong></div>
-        <div class="kx-stat-card"><div class="kx-stat-icon"><?php echo inv_icon('cog'); ?></div><span>Production</span><strong><?php echo inv_num($summary['production']); ?></strong></div>
-        <div class="kx-stat-card"><div class="kx-stat-icon"><?php echo inv_icon('pause'); ?></div><span>No Movement</span><strong><?php echo number_format($summary['no_movement']); ?></strong></div>
-        <div class="kx-stat-card"><div class="kx-stat-icon"><?php echo inv_icon('record'); ?></div><span>Zero Balance</span><strong><?php echo number_format($summary['zero_balance']); ?></strong></div>
+    <section class="inv-insight-grid inv-charts">
+        <div class="inv-insight-card">
+            <div class="inv-section-label"><div><h2>What changed inventory today?</h2><p>Stock entering, stock leaving, and the net direction of inventory movement.</p></div><span>Flow</span></div>
+            <?php $flowMax = max(1, $chartIn, $chartOut); ?>
+            <div class="inv-lite-bar"><div class="inv-lite-label"><strong>Stock In</strong><span><?php echo inv_num($chartIn); ?></span></div><div class="inv-lite-track"><div class="inv-lite-fill inv-in" style="width:<?php echo min(100, ($chartIn / $flowMax) * 100); ?>%"></div></div></div>
+            <div class="inv-lite-bar"><div class="inv-lite-label"><strong>Stock Out</strong><span><?php echo inv_num($chartOut); ?></span></div><div class="inv-lite-track"><div class="inv-lite-fill inv-out" style="width:<?php echo min(100, ($chartOut / $flowMax) * 100); ?>%"></div></div></div>
+            <div class="inv-lite-bar"><div class="inv-lite-label"><strong><?php echo inv_h($flowBalanceLabel); ?></strong><span><?php echo inv_num(abs($flowBalance)); ?></span></div><div class="inv-lite-track"><div class="inv-lite-fill inv-value" style="width:<?php echo min(100, abs($flowBalance) / $flowMax * 100); ?>%"></div></div></div>
+        </div>
+        <div class="inv-insight-card">
+            <div class="inv-section-label"><div><h2>Where should attention go?</h2><p>Exceptions and the highest value concentration in the selected scope.</p></div><span>Action</span></div>
+            <div class="inv-health"><div><span>Negative</span><strong class="inv-negative"><?php echo $chartNegative; ?></strong></div><div><span>Low</span><strong class="inv-low"><?php echo number_format($summary['low_stock']); ?></strong></div><div><span>Healthy</span><strong><?php echo $chartHealthy; ?></strong></div></div>
+            <div class="inv-lite-bar"><div class="inv-lite-label"><strong><?php echo inv_h($topGroupLabel); ?></strong><span><?php echo inv_money($topGroupValue); ?></span></div><div class="inv-lite-track"><div class="inv-lite-fill inv-value" style="width:100%"></div></div></div>
+        </div>
     </section>
 
     <section class="inv-chart-grid inv-charts">
         <div class="kx-panel kx-chart-panel">
-            <div class="kx-chart-header"><div><h2>Top 10 Usage Items</h2><p>Recipe and direct usage in the selected period</p></div><span>Usage</span></div>
+            <div class="kx-chart-header"><div><h2>Usage Hotspots</h2><p>Top consumed inventory items</p></div><span><?php echo inv_num($topUsageQty); ?></span></div>
             <?php $maxUsage = empty($chartUsage) ? 0 : max($chartUsage); ?>
             <?php if ($maxUsage <= 0) { ?><div class="kx-chart-empty">No usage for selected period.</div><?php } ?>
             <?php foreach ($chartLabels as $idx => $label) { $val = $chartUsage[$idx]; $pct = $maxUsage > 0 ? max(3, min(100, ($val / $maxUsage) * 100)) : 0; ?>
@@ -863,25 +949,15 @@ if ($exportMode === 'excel') {
             <?php } ?>
         </div>
         <div class="kx-panel kx-chart-panel">
-            <div class="kx-chart-header"><div><h2>Stock In vs Stock Out</h2><p>All movement classes</p></div><span>Flow</span></div>
-            <?php $flowMax = max(1, $chartIn, $chartOut); ?>
-            <div class="inv-lite-bar"><div class="inv-lite-label"><strong>Stock In</strong><span><?php echo inv_num($chartIn); ?></span></div><div class="inv-lite-track"><div class="inv-lite-fill inv-in" style="width:<?php echo min(100, ($chartIn / $flowMax) * 100); ?>%"></div></div></div>
-            <div class="inv-lite-bar"><div class="inv-lite-label"><strong>Stock Out</strong><span><?php echo inv_num($chartOut); ?></span></div><div class="inv-lite-track"><div class="inv-lite-fill inv-out" style="width:<?php echo min(100, ($chartOut / $flowMax) * 100); ?>%"></div></div></div>
-        </div>
-        <div class="kx-panel kx-chart-panel">
-            <div class="kx-chart-header"><div><h2>Inventory Health</h2><p>Current stock status</p></div><span>Status</span></div>
-            <div class="inv-health"><div><span>Negative</span><strong class="inv-negative"><?php echo $chartNegative; ?></strong></div><div><span>Zero</span><strong class="inv-zero"><?php echo $chartZero; ?></strong></div><div><span>Healthy</span><strong><?php echo $chartHealthy; ?></strong></div></div>
-        </div>
-        <div class="kx-panel kx-chart-panel">
-            <div class="kx-chart-header"><div><h2>Current Value by Group</h2><p>Stock value distribution</p></div><span>Value</span></div>
+            <div class="kx-chart-header"><div><h2>Value by Group</h2><p>Stock value concentration</p></div><span>Value</span></div>
             <?php $maxGroupValue = empty($valueByGroup) ? 0 : max($valueByGroup); ?>
             <?php if ($maxGroupValue <= 0) { ?><div class="kx-chart-empty">No stock value for selected filters.</div><?php } ?>
             <?php $groupShown = 0; foreach ($valueByGroup as $groupName => $groupValue) { if ($groupShown++ >= 8) { break; } $pct = $maxGroupValue > 0 ? max(3, min(100, ($groupValue / $maxGroupValue) * 100)) : 0; ?>
                 <div class="inv-lite-bar"><div class="inv-lite-label"><strong><?php echo inv_h($groupName); ?></strong><span><?php echo inv_money($groupValue); ?></span></div><div class="inv-lite-track"><div class="inv-lite-fill inv-value" style="width:<?php echo $pct; ?>%"></div></div></div>
             <?php } ?>
         </div>
-        <div class="kx-panel kx-chart-panel inv-chart-wide">
-            <div class="kx-chart-header"><div><h2>Top Sold Menu Items</h2><p>Sold quantity with recipe usage impact</p></div><span>Sold</span></div>
+        <div class="kx-panel kx-chart-panel">
+            <div class="kx-chart-header"><div><h2>Sales Pull</h2><p>Top sold menu items driving recipe usage</p></div><span><?php echo inv_num($topSoldQty); ?></span></div>
             <?php $soldSlice = array_slice($topSoldMenu, 0, 8); $maxSold = 0; foreach ($soldSlice as $soldChart) { if ($soldChart['sold_qty'] > $maxSold) { $maxSold = $soldChart['sold_qty']; } } ?>
             <?php if ($maxSold <= 0) { ?><div class="kx-chart-empty">No sold menu recipe usage for selected period.</div><?php } ?>
             <?php foreach ($soldSlice as $soldChart) { $pct = $maxSold > 0 ? max(3, min(100, ($soldChart['sold_qty'] / $maxSold) * 100)) : 0; ?>
@@ -1014,7 +1090,7 @@ var invSortDirection={};
 var invCurrentPage=1;
 
 function invIconHtml(name){
-    return '<span class="inv-icon glyphicon glyphicon-'+name+'" aria-hidden="true"></span>';
+    return '<span class="inv-icon inv-icon-'+name+'" aria-hidden="true"></span>';
 }
 
 function invParseNumber(value){
