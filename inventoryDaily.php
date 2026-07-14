@@ -1,5 +1,7 @@
 ﻿<?php
+ob_start();
 require 'config.php';
+$invConfigOutput = ob_get_clean();
 $reportName = "Inventory Analytics " . $BusinessName;
 
 function inv_h($value) { return htmlspecialchars((string)$value, ENT_QUOTES, 'UTF-8'); }
@@ -101,7 +103,7 @@ if (!$lookups['error']) { $items = $lookups['rows']; }
 $lookups = inv_fetch_all($conn, "SELECT DISTINCT ISNULL(NULLIF(GroupCode,''),'Ungrouped') AS GroupCode FROM InventoryItems ORDER BY GroupCode");
 if (!$lookups['error']) { $groups = $lookups['rows']; }
 
-$reportSql = "
+$reportSql = <<<'SQL'
 DECLARE @StartDate datetime = ?;
 DECLARE @EndDate datetime = ?;
 DECLARE @WarehouseId int = ?;
@@ -134,9 +136,9 @@ TxExpanded AS (
         it.TargetWarehouseId AS WarehouseId,
         CAST(CASE WHEN it.Multiplier = 0 THEN it.Quantity ELSE it.Quantity * it.Multiplier END AS decimal(18,6)) AS Qty,
         it.TotalPrice,
-        itt.Name AS TransactionTypeName,
-        itd.Name AS DocumentName,
-        itd.Description,
+        ISNULL(itt.Name, '') AS TransactionTypeName,
+        ISNULL(itd.Name, '') AS DocumentName,
+        ISNULL(itd.Description, '') AS Description,
         'IN' AS Direction,
         it.SourceWarehouseId,
         it.TargetWarehouseId,
@@ -146,6 +148,7 @@ TxExpanded AS (
     LEFT JOIN InventoryTransactionTypes itt ON itt.Id = it.InventoryTransactionTypeId
     LEFT JOIN InventoryTransactionDocuments itd ON itd.Id = it.InventoryTransactionDocumentId
     WHERE it.TargetWarehouseId <> 0
+      AND it.InventoryItem_Id IS NOT NULL
 
     UNION ALL
 
@@ -155,9 +158,9 @@ TxExpanded AS (
         it.SourceWarehouseId AS WarehouseId,
         -CAST(CASE WHEN it.Multiplier = 0 THEN it.Quantity ELSE it.Quantity * it.Multiplier END AS decimal(18,6)) AS Qty,
         it.TotalPrice,
-        itt.Name AS TransactionTypeName,
-        itd.Name AS DocumentName,
-        itd.Description,
+        ISNULL(itt.Name, '') AS TransactionTypeName,
+        ISNULL(itd.Name, '') AS DocumentName,
+        ISNULL(itd.Description, '') AS Description,
         'OUT' AS Direction,
         it.SourceWarehouseId,
         it.TargetWarehouseId,
@@ -167,20 +170,24 @@ TxExpanded AS (
     LEFT JOIN InventoryTransactionTypes itt ON itt.Id = it.InventoryTransactionTypeId
     LEFT JOIN InventoryTransactionDocuments itd ON itd.Id = it.InventoryTransactionDocumentId
     WHERE it.SourceWarehouseId <> 0
+      AND it.InventoryItem_Id IS NOT NULL
 ),
 TxClassified AS (
     SELECT
         tx.*,
         CASE
-            WHEN Direction = 'IN' AND SourceWarehouseId = 0 AND TransactionTypeName LIKE '%Purchase%' THEN 'Purchase'
-            WHEN Direction = 'OUT' AND TargetWarehouseId = 0 AND TransactionTypeName LIKE '%Purchase%' THEN 'Purchase Return'
+            WHEN Direction = 'IN' AND SourceWarehouseId = 0 AND TargetWarehouseId <> 0 AND (TransactionTypeName LIKE '%Purchase%' OR DocumentName LIKE '%Purchase%') THEN 'Purchase'
+            WHEN Direction = 'OUT' AND SourceWarehouseId <> 0 AND TargetWarehouseId = 0 AND (TransactionTypeName LIKE '%Purchase%' OR DocumentName LIKE '%Purchase%') THEN 'Purchase Return'
+            WHEN Direction = 'IN' AND (TransactionTypeName LIKE '%Production%' OR DocumentName LIKE '%Production%') THEN 'Production In'
+            WHEN Direction = 'OUT' AND (TransactionTypeName LIKE '%Production%' OR DocumentName LIKE '%Production%') THEN 'Production Consumption'
             WHEN Direction = 'IN' AND SourceWarehouseId <> 0 AND TargetWarehouseId <> 0 THEN 'Transfer In'
             WHEN Direction = 'OUT' AND SourceWarehouseId <> 0 AND TargetWarehouseId <> 0 THEN 'Transfer Out'
-            WHEN Direction = 'IN' AND (TransactionTypeName LIKE '%Production%' OR DocumentName LIKE '%Production%') THEN 'Production'
             WHEN Direction = 'OUT' AND (TransactionTypeName LIKE '%Waste%' OR DocumentName LIKE '%Waste%') THEN 'Waste'
-            WHEN Direction = 'IN' AND (TransactionTypeName LIKE '%Adjust%' OR DocumentName LIKE '%Adjust%') THEN 'Adjustment +'
-            WHEN Direction = 'OUT' AND (TransactionTypeName LIKE '%Adjust%' OR DocumentName LIKE '%Adjust%') THEN 'Adjustment -'
-            ELSE 'Inventory Movement'
+            WHEN Direction = 'IN' AND (TransactionTypeName LIKE '%Adjust%' OR DocumentName LIKE '%Adjust%' OR TransactionTypeName LIKE '%Count%' OR DocumentName LIKE '%Count%') THEN 'Positive Adjustment'
+            WHEN Direction = 'OUT' AND (TransactionTypeName LIKE '%Adjust%' OR DocumentName LIKE '%Adjust%' OR TransactionTypeName LIKE '%Count%' OR DocumentName LIKE '%Count%') THEN 'Negative Adjustment'
+            WHEN Direction = 'IN' AND (TransactionTypeName LIKE '%Return%' OR DocumentName LIKE '%Return%') THEN 'Sales Return'
+            WHEN Direction = 'IN' THEN 'Other In'
+            ELSE 'Other Out'
         END AS MovementClass
     FROM TxExpanded tx
     WHERE (@WarehouseId IS NULL OR tx.WarehouseId = @WarehouseId)
@@ -201,19 +208,30 @@ RecipeUsage AS (
     WHERE o.DecreaseInventory = 1
       AND o.CalculatePrice <> 0
       AND (@WarehouseId IS NULL OR o.WarehouseId = @WarehouseId)
+      AND NOT EXISTS (
+          SELECT 1
+          FROM InventoryTransactions posted
+          WHERE posted.InventoryItem_Id = ri.InventoryItem_Id
+            AND posted.SourceWarehouseId = o.WarehouseId
+            AND posted.TargetWarehouseId = 0
+            AND posted.Date >= DATEADD(minute, -10, o.CreatedDateTime)
+            AND posted.Date < DATEADD(minute, 10, o.CreatedDateTime)
+            AND ABS(CAST(CASE WHEN posted.Multiplier = 0 THEN posted.Quantity ELSE posted.Quantity * posted.Multiplier END AS decimal(18,6)) - CAST(o.Quantity * ri.Quantity AS decimal(18,6))) < 0.0001
+      )
 ),
 UnifiedLedger AS (
     SELECT
         ItemCode,
         Date,
         WarehouseId,
+        CASE WHEN @WarehouseId IS NULL THEN 0 ELSE WarehouseId END AS ReportWarehouseId,
         MovementClass,
         CASE WHEN Qty > 0 THEN Qty ELSE 0 END AS QtyIn,
         CASE WHEN Qty < 0 THEN ABS(Qty) ELSE 0 END AS QtyOut,
         Qty AS NetQty,
         TransactionTypeName AS TransactionType,
-        ISNULL(DocumentName, '') AS Reference,
-        ISNULL(Description, '') AS DocumentText,
+        DocumentName AS Reference,
+        Description AS DocumentText,
         SourceTable,
         SourceId
     FROM TxClassified
@@ -224,34 +242,42 @@ UnifiedLedger AS (
         ItemCode,
         Date,
         WarehouseId,
+        CASE WHEN @WarehouseId IS NULL THEN 0 ELSE WarehouseId END AS ReportWarehouseId,
         'Recipe Consumption' AS MovementClass,
         CAST(0 AS decimal(18,6)) AS QtyIn,
         UsedQty AS QtyOut,
         -UsedQty AS NetQty,
-        'Sales Recipe Usage' AS TransactionType,
+        'Orders + Recipes' AS TransactionType,
         MenuItemName + ' / ' + PortionName AS Reference,
-        '' AS DocumentText,
+        'Not duplicated by InventoryTransactions' AS DocumentText,
         'Orders + Recipes' AS SourceTable,
         SourceId
     FROM RecipeUsage
 ),
+ItemScope AS (
+    SELECT
+        i.*,
+        CAST(CASE WHEN @WarehouseId IS NULL THEN 0 ELSE @WarehouseId END AS int) AS ReportWarehouseId
+    FROM Items i
+),
 Opening AS (
-    SELECT ItemCode, SUM(NetQty) AS OpeningQty
+    SELECT ItemCode, ReportWarehouseId, SUM(NetQty) AS OpeningQty
     FROM UnifiedLedger
     WHERE Date < @StartDate
-    GROUP BY ItemCode
+    GROUP BY ItemCode, ReportWarehouseId
 ),
 PeriodAgg AS (
     SELECT
         ItemCode,
+        ReportWarehouseId,
         SUM(CASE WHEN MovementClass = 'Purchase' THEN QtyIn ELSE 0 END) AS PurchaseQty,
-        SUM(CASE WHEN MovementClass = 'Production' THEN QtyIn ELSE 0 END) AS ProductionQty,
+        SUM(CASE WHEN MovementClass = 'Production In' THEN QtyIn ELSE 0 END) AS ProductionQty,
         SUM(CASE WHEN MovementClass = 'Transfer In' THEN QtyIn ELSE 0 END) AS TransferInQty,
         SUM(CASE WHEN MovementClass = 'Recipe Consumption' THEN QtyOut ELSE 0 END) AS RecipeUsageQty,
-        SUM(CASE WHEN MovementClass = 'Inventory Movement' THEN QtyOut ELSE 0 END) AS DirectUsageQty,
+        SUM(CASE WHEN MovementClass = 'Direct Usage' THEN QtyOut ELSE 0 END) AS DirectUsageQty,
         SUM(CASE WHEN MovementClass = 'Waste' THEN QtyOut ELSE 0 END) AS WasteQty,
-        SUM(CASE WHEN MovementClass = 'Adjustment +' THEN QtyIn ELSE 0 END) AS AdjustmentPlusQty,
-        SUM(CASE WHEN MovementClass = 'Adjustment -' THEN QtyOut ELSE 0 END) AS AdjustmentMinusQty,
+        SUM(CASE WHEN MovementClass = 'Positive Adjustment' THEN QtyIn ELSE 0 END) AS AdjustmentPlusQty,
+        SUM(CASE WHEN MovementClass = 'Negative Adjustment' THEN QtyOut ELSE 0 END) AS AdjustmentMinusQty,
         SUM(CASE WHEN MovementClass = 'Transfer Out' THEN QtyOut ELSE 0 END) AS TransferOutQty,
         SUM(QtyIn) AS StockInQty,
         SUM(QtyOut) AS StockOutQty,
@@ -259,34 +285,47 @@ PeriodAgg AS (
         COUNT(*) AS MovementCount
     FROM UnifiedLedger
     WHERE Date >= @StartDate AND Date < @EndDate
+    GROUP BY ItemCode, ReportWarehouseId
+),
+MovementMatch AS (
+    SELECT ItemCode, ReportWarehouseId, COUNT(*) AS MatchCount
+    FROM UnifiedLedger
+    WHERE Date >= @StartDate AND Date < @EndDate
       AND (@MovementType IS NULL OR MovementClass = @MovementType)
-    GROUP BY ItemCode
+    GROUP BY ItemCode, ReportWarehouseId
 ),
 CurrentAgg AS (
-    SELECT ItemCode, SUM(NetQty) AS CurrentQty
+    SELECT ItemCode, ReportWarehouseId, SUM(NetQty) AS CurrentQty
     FROM UnifiedLedger
     WHERE Date < SYSDATETIME()
-    GROUP BY ItemCode
+    GROUP BY ItemCode, ReportWarehouseId
+),
+PurchaseCost AS (
+    SELECT
+        it.InventoryItem_Id AS ItemCode,
+        SUM(it.TotalPrice) / NULLIF(SUM(CAST(CASE WHEN it.Multiplier = 0 THEN it.Quantity ELSE it.Quantity * it.Multiplier END AS decimal(18,6))), 0) AS UnitCost
+    FROM InventoryTransactions it
+    LEFT JOIN InventoryTransactionTypes itt ON itt.Id = it.InventoryTransactionTypeId
+    LEFT JOIN InventoryTransactionDocuments itd ON itd.Id = it.InventoryTransactionDocumentId
+    WHERE it.SourceWarehouseId = 0
+      AND it.TargetWarehouseId <> 0
+      AND it.InventoryItem_Id IS NOT NULL
+      AND it.TotalPrice > 0
+      AND (ISNULL(itt.Name,'') LIKE '%Purchase%' OR ISNULL(itd.Name,'') LIKE '%Purchase%')
+    GROUP BY it.InventoryItem_Id
 ),
 Cost AS (
     SELECT
         i.ItemCode,
-        COALESCE(
-            (SELECT TOP 1 it.TotalPrice / NULLIF(CASE WHEN it.Multiplier = 0 THEN it.Quantity ELSE it.Quantity * it.Multiplier END, 0)
-             FROM InventoryTransactions it
-             WHERE it.InventoryItem_Id = i.ItemCode
-               AND it.TotalPrice <> 0
-             ORDER BY it.Date DESC, it.Id DESC),
-            i.DefaultBaseUnitCost,
-            0
-        ) AS UnitCost
+        COALESCE(pc.UnitCost, NULLIF(i.DefaultBaseUnitCost, 0), 0) AS UnitCost
     FROM Items i
+    LEFT JOIN PurchaseCost pc ON pc.ItemCode = i.ItemCode
 )
 SELECT
     i.ItemCode,
     i.ItemName,
     i.InventoryGroup,
-    COALESCE(w.Name, 'All Warehouses') AS Warehouse,
+    CASE WHEN @WarehouseId IS NULL THEN 'All Warehouses' ELSE ISNULL(w.Name, 'Warehouse #' + CAST(@WarehouseId AS nvarchar(20))) END AS Warehouse,
     i.BaseUnit,
     CAST(ISNULL(o.OpeningQty, 0) AS decimal(18,3)) AS OpeningQty,
     CAST(ISNULL(pa.PurchaseQty, 0) AS decimal(18,3)) AS PurchaseQty,
@@ -307,18 +346,20 @@ SELECT
     ISNULL(pa.MovementCount, 0) AS MovementCount,
     CAST(ISNULL(pa.StockInQty, 0) AS decimal(18,3)) AS StockInQty,
     CAST(ISNULL(pa.StockOutQty, 0) AS decimal(18,3)) AS StockOutQty
-FROM Items i
-LEFT JOIN Opening o ON o.ItemCode = i.ItemCode
-LEFT JOIN PeriodAgg pa ON pa.ItemCode = i.ItemCode
-LEFT JOIN CurrentAgg ca ON ca.ItemCode = i.ItemCode
+FROM ItemScope i
+LEFT JOIN Opening o ON o.ItemCode = i.ItemCode AND o.ReportWarehouseId = i.ReportWarehouseId
+LEFT JOIN PeriodAgg pa ON pa.ItemCode = i.ItemCode AND pa.ReportWarehouseId = i.ReportWarehouseId
+LEFT JOIN MovementMatch mm ON mm.ItemCode = i.ItemCode AND mm.ReportWarehouseId = i.ReportWarehouseId
+LEFT JOIN CurrentAgg ca ON ca.ItemCode = i.ItemCode AND ca.ReportWarehouseId = i.ReportWarehouseId
 LEFT JOIN Cost cost ON cost.ItemCode = i.ItemCode
 LEFT JOIN Warehouses w ON w.Id = @WarehouseId
-WHERE (@ShowZeroMovement = 1 OR ISNULL(pa.MovementCount, 0) > 0)
+WHERE (@MovementType IS NULL OR ISNULL(mm.MatchCount, 0) > 0)
+  AND (@ShowZeroMovement = 1 OR ISNULL(pa.MovementCount, 0) > 0)
   AND (@ShowZeroBalance = 1 OR ISNULL(ca.CurrentQty, 0) <> 0)
   AND (@ShowNegativeOnly = 0 OR ISNULL(ca.CurrentQty, 0) < 0)
   AND (@ShowLowStock = 0 OR (ISNULL(ca.CurrentQty, 0) > 0 AND ISNULL(ca.CurrentQty, 0) <= @LowStockThreshold))
 ORDER BY i.ItemName;
-";
+SQL;
 
 $params = array(
     $startDate,
@@ -342,13 +383,14 @@ if ($report['error']) {
     $rows = $report['rows'];
 }
 
-$ledgerSql = "
+$ledgerSql = <<<'SQL'
 DECLARE @StartDate datetime = ?;
 DECLARE @EndDate datetime = ?;
 DECLARE @WarehouseId int = ?;
 DECLARE @ItemId int = ?;
 DECLARE @GroupCode nvarchar(100) = ?;
 DECLARE @Search nvarchar(120) = ?;
+DECLARE @MovementType nvarchar(60) = ?;
 
 WITH Items AS (
     SELECT
@@ -362,36 +404,43 @@ WITH Items AS (
 TxExpanded AS (
     SELECT it.InventoryItem_Id AS ItemCode, it.Date, it.TargetWarehouseId AS WarehouseId,
            CAST(CASE WHEN it.Multiplier = 0 THEN it.Quantity ELSE it.Quantity * it.Multiplier END AS decimal(18,6)) AS Qty,
-           itt.Name AS TransactionTypeName, itd.Name AS DocumentName, itd.Description,
+           ISNULL(itt.Name,'') AS TransactionTypeName, ISNULL(itd.Name,'') AS DocumentName, ISNULL(itd.Description,'') AS Description,
            'IN' AS Direction, it.SourceWarehouseId, it.TargetWarehouseId,
            'InventoryTransactions' AS SourceTable, CAST(it.Id AS nvarchar(30)) AS SourceId
     FROM InventoryTransactions it
     LEFT JOIN InventoryTransactionTypes itt ON itt.Id = it.InventoryTransactionTypeId
     LEFT JOIN InventoryTransactionDocuments itd ON itd.Id = it.InventoryTransactionDocumentId
     WHERE it.TargetWarehouseId <> 0
+      AND it.InventoryItem_Id IS NOT NULL
+
     UNION ALL
+
     SELECT it.InventoryItem_Id AS ItemCode, it.Date, it.SourceWarehouseId AS WarehouseId,
            -CAST(CASE WHEN it.Multiplier = 0 THEN it.Quantity ELSE it.Quantity * it.Multiplier END AS decimal(18,6)) AS Qty,
-           itt.Name AS TransactionTypeName, itd.Name AS DocumentName, itd.Description,
+           ISNULL(itt.Name,''), ISNULL(itd.Name,''), ISNULL(itd.Description,''),
            'OUT' AS Direction, it.SourceWarehouseId, it.TargetWarehouseId,
            'InventoryTransactions' AS SourceTable, CAST(it.Id AS nvarchar(30)) AS SourceId
     FROM InventoryTransactions it
     LEFT JOIN InventoryTransactionTypes itt ON itt.Id = it.InventoryTransactionTypeId
     LEFT JOIN InventoryTransactionDocuments itd ON itd.Id = it.InventoryTransactionDocumentId
     WHERE it.SourceWarehouseId <> 0
+      AND it.InventoryItem_Id IS NOT NULL
 ),
 TxClassified AS (
     SELECT tx.*,
         CASE
-            WHEN Direction = 'IN' AND SourceWarehouseId = 0 AND TransactionTypeName LIKE '%Purchase%' THEN 'Purchase'
-            WHEN Direction = 'OUT' AND TargetWarehouseId = 0 AND TransactionTypeName LIKE '%Purchase%' THEN 'Purchase Return'
+            WHEN Direction = 'IN' AND SourceWarehouseId = 0 AND TargetWarehouseId <> 0 AND (TransactionTypeName LIKE '%Purchase%' OR DocumentName LIKE '%Purchase%') THEN 'Purchase'
+            WHEN Direction = 'OUT' AND SourceWarehouseId <> 0 AND TargetWarehouseId = 0 AND (TransactionTypeName LIKE '%Purchase%' OR DocumentName LIKE '%Purchase%') THEN 'Purchase Return'
+            WHEN Direction = 'IN' AND (TransactionTypeName LIKE '%Production%' OR DocumentName LIKE '%Production%') THEN 'Production In'
+            WHEN Direction = 'OUT' AND (TransactionTypeName LIKE '%Production%' OR DocumentName LIKE '%Production%') THEN 'Production Consumption'
             WHEN Direction = 'IN' AND SourceWarehouseId <> 0 AND TargetWarehouseId <> 0 THEN 'Transfer In'
             WHEN Direction = 'OUT' AND SourceWarehouseId <> 0 AND TargetWarehouseId <> 0 THEN 'Transfer Out'
-            WHEN Direction = 'IN' AND (TransactionTypeName LIKE '%Production%' OR DocumentName LIKE '%Production%') THEN 'Production'
             WHEN Direction = 'OUT' AND (TransactionTypeName LIKE '%Waste%' OR DocumentName LIKE '%Waste%') THEN 'Waste'
-            WHEN Direction = 'IN' AND (TransactionTypeName LIKE '%Adjust%' OR DocumentName LIKE '%Adjust%') THEN 'Adjustment +'
-            WHEN Direction = 'OUT' AND (TransactionTypeName LIKE '%Adjust%' OR DocumentName LIKE '%Adjust%') THEN 'Adjustment -'
-            ELSE 'Inventory Movement'
+            WHEN Direction = 'IN' AND (TransactionTypeName LIKE '%Adjust%' OR DocumentName LIKE '%Adjust%' OR TransactionTypeName LIKE '%Count%' OR DocumentName LIKE '%Count%') THEN 'Positive Adjustment'
+            WHEN Direction = 'OUT' AND (TransactionTypeName LIKE '%Adjust%' OR DocumentName LIKE '%Adjust%' OR TransactionTypeName LIKE '%Count%' OR DocumentName LIKE '%Count%') THEN 'Negative Adjustment'
+            WHEN Direction = 'IN' AND (TransactionTypeName LIKE '%Return%' OR DocumentName LIKE '%Return%') THEN 'Sales Return'
+            WHEN Direction = 'IN' THEN 'Other In'
+            ELSE 'Other Out'
         END AS MovementClass
     FROM TxExpanded tx
     WHERE (@WarehouseId IS NULL OR tx.WarehouseId = @WarehouseId)
@@ -404,19 +453,32 @@ RecipeUsage AS (
     JOIN MenuItemPortions mip ON mip.MenuItemId = o.MenuItemId AND mip.Name = o.PortionName
     JOIN Recipes r ON r.Portion_Id = mip.Id
     JOIN RecipeItems ri ON ri.RecipeId = r.Id
-    WHERE o.DecreaseInventory = 1 AND o.CalculatePrice <> 0
+    WHERE o.DecreaseInventory = 1
+      AND o.CalculatePrice <> 0
       AND (@WarehouseId IS NULL OR o.WarehouseId = @WarehouseId)
+      AND NOT EXISTS (
+          SELECT 1
+          FROM InventoryTransactions posted
+          WHERE posted.InventoryItem_Id = ri.InventoryItem_Id
+            AND posted.SourceWarehouseId = o.WarehouseId
+            AND posted.TargetWarehouseId = 0
+            AND posted.Date >= DATEADD(minute, -10, o.CreatedDateTime)
+            AND posted.Date < DATEADD(minute, 10, o.CreatedDateTime)
+            AND ABS(CAST(CASE WHEN posted.Multiplier = 0 THEN posted.Quantity ELSE posted.Quantity * posted.Multiplier END AS decimal(18,6)) - CAST(o.Quantity * ri.Quantity AS decimal(18,6))) < 0.0001
+      )
 ),
 UnifiedLedger AS (
     SELECT ItemCode, Date, WarehouseId, MovementClass,
            CASE WHEN Qty > 0 THEN Qty ELSE 0 END AS QtyIn,
            CASE WHEN Qty < 0 THEN ABS(Qty) ELSE 0 END AS QtyOut,
-           Qty AS NetQty, TransactionTypeName AS TransactionType, ISNULL(DocumentName,'') AS Reference,
-           ISNULL(Description,'') AS DocumentText, SourceTable, SourceId
+           Qty AS NetQty, TransactionTypeName AS TransactionType, DocumentName AS Reference,
+           Description AS DocumentText, SourceTable, SourceId
     FROM TxClassified
+
     UNION ALL
+
     SELECT ItemCode, Date, WarehouseId, 'Recipe Consumption', 0, UsedQty, -UsedQty,
-           'Sales Recipe Usage', MenuItemName + ' / ' + PortionName, '', 'Orders + Recipes', SourceId
+           'Orders + Recipes', MenuItemName + ' / ' + PortionName, 'Not duplicated by InventoryTransactions', 'Orders + Recipes', SourceId
     FROM RecipeUsage
 )
 SELECT
@@ -426,10 +488,11 @@ FROM UnifiedLedger ul
 JOIN Items i ON i.ItemCode = ul.ItemCode
 LEFT JOIN Warehouses w ON w.Id = ul.WarehouseId
 WHERE ul.Date >= @StartDate AND ul.Date < @EndDate
+  AND (@MovementType IS NULL OR ul.MovementClass = @MovementType)
 ORDER BY ul.ItemCode, ul.Date, ul.SourceTable, ul.SourceId;
-";
+SQL;
 
-$ledger = inv_fetch_all($conn, $ledgerSql, array($startDate, $endDate, $warehouseId, $itemId, $groupCode, $search));
+$ledger = inv_fetch_all($conn, $ledgerSql, array($startDate, $endDate, $warehouseId, $itemId, $groupCode, $search, $movementType));
 if ($ledger['error']) {
     $errors[] = $ledger['error'];
 } else {
@@ -469,6 +532,16 @@ WHERE o.CreatedDateTime >= @StartDate
   AND (@GroupCode IS NULL OR ISNULL(NULLIF(ii.GroupCode,''),'Ungrouped') = @GroupCode)
   AND (@Search IS NULL OR @Search = '' OR CAST(ii.Id AS nvarchar(20)) LIKE '%' + @Search + '%' OR ii.Name LIKE '%' + @Search + '%' OR o.MenuItemName LIKE '%' + @Search + '%' OR ISNULL(ii.GroupCode,'') LIKE '%' + @Search + '%')
   AND (@MovementType IS NULL OR @MovementType = 'Recipe Consumption')
+  AND NOT EXISTS (
+      SELECT 1
+      FROM InventoryTransactions posted
+      WHERE posted.InventoryItem_Id = ri.InventoryItem_Id
+        AND posted.SourceWarehouseId = o.WarehouseId
+        AND posted.TargetWarehouseId = 0
+        AND posted.Date >= DATEADD(minute, -10, o.CreatedDateTime)
+        AND posted.Date < DATEADD(minute, 10, o.CreatedDateTime)
+        AND ABS(CAST(CASE WHEN posted.Multiplier = 0 THEN posted.Quantity ELSE posted.Quantity * posted.Multiplier END AS decimal(18,6)) - CAST(o.Quantity * ri.Quantity AS decimal(18,6))) < 0.0001
+  )
 GROUP BY o.MenuItemName, o.PortionName, r.Id, ii.Id, ii.Name, ii.BaseUnit, ri.Quantity
 ORDER BY o.MenuItemName, o.PortionName, ii.Name;
 ";
@@ -834,6 +907,7 @@ if ($exportMode === 'excel') {
     </style>
 </head>
 <body class="PaginaVanzari kx-page kx-inventory-page">
+<?php echo $invConfigOutput; ?>
 <?php include 'header.php'; ?>
 <main class="kx-shell">
     <div class="inv-print-title"><h1>Inventory Analytics</h1><p><?php echo inv_h($fromInput); ?> to <?php echo inv_h($toInput); ?></p></div>
@@ -900,7 +974,7 @@ if ($exportMode === 'excel') {
                 <div class="inv-field"><label>Warehouse</label><select class="form-control" name="warehouseId"><option value="">All Warehouses</option><?php foreach($warehouses as $w){ ?><option value="<?php echo (int)$w['Id']; ?>" <?php echo $warehouseId===(int)$w['Id']?'selected':''; ?>><?php echo inv_h($w['Name']); ?></option><?php } ?></select></div>
                 <div class="inv-field"><label>Inventory Group</label><select class="form-control" name="groupCode"><option value="">All Groups</option><?php foreach($groups as $g){ ?><option value="<?php echo inv_h($g['GroupCode']); ?>" <?php echo $groupCode===$g['GroupCode']?'selected':''; ?>><?php echo inv_h($g['GroupCode']); ?></option><?php } ?></select></div>
                 <div class="inv-field"><label>Inventory Item</label><select class="form-control" name="itemId"><option value="">All Items</option><?php foreach($items as $it){ ?><option value="<?php echo (int)$it['Id']; ?>" <?php echo $itemId===(int)$it['Id']?'selected':''; ?>><?php echo inv_h($it['Name']); ?></option><?php } ?></select></div>
-                <div class="inv-field"><label>Movement Type</label><select class="form-control" name="movementType"><option value="">All Movements</option><?php foreach(array('Purchase','Purchase Return','Recipe Consumption','Production','Transfer In','Transfer Out','Waste','Adjustment +','Adjustment -','Inventory Movement') as $m){ ?><option value="<?php echo inv_h($m); ?>" <?php echo $movementType===$m?'selected':''; ?>><?php echo inv_h($m); ?></option><?php } ?></select></div>
+                <div class="inv-field"><label>Movement Type</label><select class="form-control" name="movementType"><option value="">All Movements</option><?php foreach(array('Purchase','Purchase Return','Transfer In','Transfer Out','Production In','Production Consumption','Recipe Consumption','Direct Usage','Waste','Positive Adjustment','Negative Adjustment','Sales Return','Other In','Other Out') as $m){ ?><option value="<?php echo inv_h($m); ?>" <?php echo $movementType===$m?'selected':''; ?>><?php echo inv_h($m); ?></option><?php } ?></select></div>
                 <div class="inv-field"><label>Search</label><input class="form-control" type="search" name="search" value="<?php echo inv_h($search); ?>" placeholder="Item, code, group"></div>
                 <div class="inv-field"><label>Low Stock Threshold</label><input class="form-control" type="number" step="0.001" name="lowStockThreshold" value="<?php echo inv_h($lowStockThreshold); ?>"></div>
                 <div>
@@ -1261,7 +1335,7 @@ function invCleanTableHtml(tableId){
 
 function invMetricRows(){
     var rows='';
-    document.querySelectorAll('.kx-stat-card').forEach(function(card){
+    document.querySelectorAll('.inv-kpi,.inv-metric-strip div,.kx-stat-card').forEach(function(card){
         var label=(card.querySelector('span')||{}).innerText||'';
         var value=(card.querySelector('strong')||{}).innerText||'';
         if(label && value){ rows+='<tr><td>'+invEscape(label)+'</td><td class="right">'+invEscape(value)+'</td></tr>'; }
