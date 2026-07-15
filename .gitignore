@@ -2,8 +2,33 @@ config.php
 config.local.php
 config - Copy.php
 .env
+.env.*
 *.log
+*.tmp
+*.temp
+*.cache
 New folder/
 
 *.backup*
 *.bak
+*.backup*.php
+*.bak.php
+outputs/
+output/
+temp/
+cache/
+node_modules/
+vendor/
+*.mdf
+*.ldf
+*.bak
+*.trn
+*.sqlbak
+*.zip
+*.7z
+*.rar
+.vs/
+.vscode/
+.idea/
+Thumbs.db
+Desktop.ini
