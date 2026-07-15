@@ -22,6 +22,7 @@ if ($conn) {
     echo "<div class='connected'>Connected.</div>";
 } else {
     echo "<div class='unconnected'>Database connection could not be opened.</div>";
-    die(print_r(sqlsrv_errors(), true));
+    error_log(print_r(sqlsrv_errors(), true));
+    die('Database connection could not be opened.');
 }
 ?>

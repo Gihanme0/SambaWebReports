@@ -64,6 +64,10 @@ Do not skip directly from a request to editing. First inspect the current files 
 - Keep `config.example.php` free of real credentials.
 - Escape all dynamic HTML output.
 - Prefer concise user-safe error messages with enough diagnostic context for developers.
+- Protect report entry pages with `auth_require_permission()` before loading report data.
+- Use CSRF tokens for all state-changing admin forms.
+- Store WebReports passwords only with `password_hash()` and verify with `password_verify()`.
+- Add new report permissions to `database/webreports-auth-install.sql` and `auth/permissions.php` together.
 
 ## Documentation Expectations
 

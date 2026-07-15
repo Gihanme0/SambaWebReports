@@ -133,3 +133,18 @@ Use these sessions to continue focused work later with ChatGPT or Codex.
 - Known limitations: Planned and in-progress report cards intentionally avoid broken links; viewport behavior was validated through responsive markup/CSS and HTTP rendering, with screenshot QA still pending.
 - Shared dependencies: Kynix topbar and logo.
 - Future review notes: Keep active state based on current page, avoid broken links for planned reports, and keep dashboard queries summary-only.
+
+## S14 - Authentication, Users & Permissions
+
+- Purpose: Secure SambaPOS WebReports with database-driven authentication, role-based access control, admin management, and audit logging.
+- Current status: Implemented on `feature/inventory-analytics`.
+- Main files: `auth/auth.php`, `auth/csrf.php`, `auth/permissions.php`, `login.php`, `logout.php`, `setup-admin.php`, `change-password.php`, `unauthorized.php`, `header.php`, `admin/*.php`, `database/webreports-auth-install.sql`.
+- Database tables: `WebReportUsers`, `WebReportRoles`, `WebReportPermissions`, `WebReportUserRoles`, `WebReportRolePermissions`, `WebReportAuditLogs`.
+- Permission catalog: `dashboard.view`, `daily_sales.view`, `periodic_sales.view`, `inventory_analytics.view`, `purchase_history.view`, `consumption.view`, `stock.view`, `users.manage`, `roles.manage`, `permissions.manage`, `audit.view`, `settings.manage`, `exports.excel`, `exports.pdf`, `exports.print`.
+- Default roles: Super Admin, Admin, Manager, Accountant, Inventory User, Viewer.
+- Completed work: RBAC install script, secure login/logout, session timeout, password policy, first Super Admin setup, change password, CSRF helpers, report permission gates, export permission checks, role-aware navigation, user management, role permission management, and audit log views.
+- Setup: Run `database/webreports-auth-install.sql`, then open `setup-admin.php` and create the first Super Admin.
+- Security notes: Passwords use `password_hash()`, login errors are generic, sessions regenerate after login, admin POST forms require CSRF, and direct URLs are protected server-side.
+- Known limitations: Login rate limiting/account lockout is not implemented; local `config.php` is ignored and should be manually kept aligned with the safer `config.example.php` error pattern; browser screenshot QA for admin mobile views remains pending.
+- Commit hashes: `9d13c55` schema, `6489347` auth core, `404bbdc` report protection, `df4179e` role navigation, `56bb132` admin panel.
+- Future review notes: Add login throttling if the app becomes internet-facing; add new permissions before publishing new report pages.

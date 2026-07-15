@@ -65,3 +65,17 @@ Use this checklist for every report change.
 - [ ] Periodic Sales still works.
 - [ ] Inventory Analytics still works.
 - [ ] Purchase History, Consumption, and Stock are unaffected unless intentionally changed.
+
+## Authentication And Authorization
+
+- [ ] Unauthenticated report URLs redirect to login.
+- [ ] Valid login regenerates the session ID.
+- [ ] Invalid login shows a generic error.
+- [ ] Inactive users cannot sign in.
+- [ ] Session timeout returns the user to login.
+- [ ] Direct report URLs enforce the matching permission.
+- [ ] Navigation hides unauthorized report links.
+- [ ] Admin pages require admin permissions.
+- [ ] CSRF rejection works on admin POST forms.
+- [ ] Passwords are stored as hashes, never plaintext.
+- [ ] Audit entries are created for login, logout, user, role, and password actions.

@@ -10,15 +10,17 @@ This project follows a Keep-a-Changelog-style structure.
 - Kynix report design system documentation.
 - Project session map for continuing work across reports.
 - Kynix Report Center Dashboard as the main `index.php` landing page.
+- Database-driven WebReports authentication, roles, permissions, audit logs, setup flow, and admin panel.
 
 ### Changed
 
 - README expanded with setup, workflow, and testing guidance.
 - Home navigation now opens the dashboard explicitly.
+- Report navigation is now role-aware and report entry pages require authenticated permissions.
 
 ### Fixed
 
-- None yet in this documentation milestone.
+- Tracked example configuration no longer demonstrates printing raw SQL Server connection errors to the browser.
 
 ### Performance
 
@@ -27,11 +29,12 @@ This project follows a Keep-a-Changelog-style structure.
 ### Documentation
 
 - Added repository-specific coding, Git, database, testing, and release documentation.
+- Added authentication setup documentation and RBAC testing guidance.
 
 ### Known Issues
 
-- Some legacy reportSQL files still expose raw SQL errors.
 - Legacy Purchase History, Consumption, and Stock pages are not fully modernized to the Kynix report layout.
+- Login rate limiting and account lockout are not implemented yet.
 
 ## Inventory Analytics Milestones
 

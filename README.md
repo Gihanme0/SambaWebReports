@@ -26,7 +26,19 @@ SambaWebReports is a PHP reporting interface for SambaPOS running on a local WAM
 
 3. Edit `config.php` locally with your SQL Server host, database name, username, password, and business name.
 
-4. Open the reports through Apache:
+4. Install WebReports authentication:
+
+   ```text
+   database/webreports-auth-install.sql
+   ```
+
+5. Create the first Super Admin:
+
+   ```text
+   http://localhost/SambaWebReports/setup-admin.php
+   ```
+
+6. Open the reports through Apache:
 
    ```text
    http://localhost/SambaWebReports/
@@ -53,6 +65,9 @@ SambaWebReports is a PHP reporting interface for SambaPOS running on a local WAM
 - `jquery/` - Bundled jQuery.
 - `img/` - Logo and image assets.
 - `reportSQL/` - Legacy included SQL report fragments.
+- `auth/` - Shared authentication, CSRF, and permission helpers.
+- `admin/` - User, role, permission, and audit management pages.
+- `database/` - Installation scripts for WebReports-owned tables.
 - `docs/` - Development standards, workflow, database notes, testing checklists, and session documentation.
 
 ## Git Workflow
@@ -97,6 +112,7 @@ Use [docs/TESTING-CHECKLIST.md](docs/TESTING-CHECKLIST.md) before committing rep
 - [Database Notes](docs/DATABASE-NOTES.md)
 - [Testing Checklist](docs/TESTING-CHECKLIST.md)
 - [Project Sessions](docs/PROJECT-SESSIONS.md)
+- [Authentication Setup](docs/AUTHENTICATION-SETUP.md)
 - [Changelog](docs/CHANGELOG.md)
 - [Release Notes Template](docs/RELEASE-NOTES.md)
 
@@ -106,6 +122,8 @@ Use [docs/TESTING-CHECKLIST.md](docs/TESTING-CHECKLIST.md) before committing rep
 - Do not expose raw SQL Server credentials or private business data in documentation.
 - Avoid showing raw SQL errors in user-facing report pages.
 - Keep `config.example.php` generic.
+- Run `database/webreports-auth-install.sql` and create the first Super Admin before exposing reports to users.
+- Manage report access with roles and permissions; do not hardcode users into report pages.
 
 ## Contribution Workflow
 
