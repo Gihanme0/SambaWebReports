@@ -129,5 +129,7 @@ Use these sessions to continue focused work later with ChatGPT or Codex.
 - Main files: `header.php`, `index.php`, `completeSales.php`.
 - Completed work: Report Center Dashboard with sales KPIs, inventory KPIs, alerts, insights, quick actions, grouped report cards, localStorage recent reports, Excel export, and PDF/print summary.
 - Pending work: Browser-based visual QA screenshots and deeper future report modules for planned cards.
+- Commit hashes: `95b802c` dashboard implementation.
+- Known limitations: Planned and in-progress report cards intentionally avoid broken links; viewport behavior was validated through responsive markup/CSS and HTTP rendering, with screenshot QA still pending.
 - Shared dependencies: Kynix topbar and logo.
 - Future review notes: Keep active state based on current page, avoid broken links for planned reports, and keep dashboard queries summary-only.
