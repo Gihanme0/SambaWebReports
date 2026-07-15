@@ -217,6 +217,11 @@ function auth_safe_return_url($value) {
     return './' . ltrim($value, './');
 }
 
+function auth_app_prefix() {
+    $script = isset($_SERVER['SCRIPT_NAME']) ? str_replace('\\', '/', $_SERVER['SCRIPT_NAME']) : '';
+    return strpos($script, '/admin/') !== false ? '../' : './';
+}
+
 function auth_current_request_path() {
     $uri = isset($_SERVER['REQUEST_URI']) ? $_SERVER['REQUEST_URI'] : 'index.php';
     $base = basename(dirname($_SERVER['SCRIPT_NAME']));
@@ -230,7 +235,7 @@ function auth_redirect($url) {
 
 function auth_login_url($reason = '') {
     $return = rawurlencode(auth_current_request_path());
-    $url = './login.php?return=' . $return;
+    $url = auth_app_prefix() . 'login.php?return=' . $return;
     if ($reason !== '') {
         $url .= '&reason=' . rawurlencode($reason);
     }
@@ -254,21 +259,21 @@ function auth_require_login() {
     }
     $page = basename($_SERVER['PHP_SELF']);
     if (!empty($user['MustChangePassword']) && $page !== 'change-password.php' && $page !== 'logout.php') {
-        auth_redirect('./change-password.php');
+        auth_redirect(auth_app_prefix() . 'change-password.php');
     }
 }
 
 function auth_require_permission($permissionKey) {
     auth_require_login();
     if (!auth_has_permission($permissionKey)) {
-        auth_redirect('./unauthorized.php?permission=' . rawurlencode($permissionKey));
+        auth_redirect(auth_app_prefix() . 'unauthorized.php?permission=' . rawurlencode($permissionKey));
     }
 }
 
 function auth_require_any_permission($permissionKeys) {
     auth_require_login();
     if (!auth_has_any_permission($permissionKeys)) {
-        auth_redirect('./unauthorized.php');
+        auth_redirect(auth_app_prefix() . 'unauthorized.php');
     }
 }
 

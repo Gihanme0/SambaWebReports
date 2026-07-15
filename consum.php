@@ -1,3 +1,7 @@
+<?php
+require_once __DIR__ . '/auth/auth.php';
+auth_require_permission('consumption.view');
+?>
 <!DOCTYPE html>
 <html>
 <head>
@@ -12,7 +16,7 @@
 	<script type="text/javascript" src="./js/bootstrap-datetimepicker.js" charset="UTF-8"></script>
 </head>
 <body class="PaginaConsum">
-<?php require 'config.php';?>
+<?php require_once __DIR__ . '/config.php';?>
 <?php $reportName = "Consumption Vouchers ".$BusinessName;?>
 <div class="col-md-12 top-container">
     <form action="consum.php" class="form" method="post"  role="form">

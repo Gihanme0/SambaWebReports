@@ -6,8 +6,13 @@
  * Date cutoff: each selected date uses the SambaPOS 06:00-to-next-day-06:00 work-period boundary.
  * Maintenance: keep SQL parameterized, escape output, and keep Daily Sales financial rules in sync.
  */
-require 'config.php';
+require_once __DIR__ . '/auth/auth.php';
+auth_require_permission('periodic_sales.view');
+require_once __DIR__ . '/config.php';
 $reportName = "Periodic Sales " . $BusinessName;
+$canExportExcel = auth_has_permission('exports.excel');
+$canExportPdf = auth_has_permission('exports.pdf');
+$canExportPrint = auth_has_permission('exports.print');
 
 $startInput = isset($_POST['startDate']) ? trim($_POST['startDate']) : '';
 $endInput = isset($_POST['endDate']) ? trim($_POST['endDate']) : '';
@@ -75,7 +80,7 @@ if ($hasReport && $startTs && $endTs) {
     ";
     $stmt = sqlsrv_query($conn, $itemSql, array($periodStartSql, $periodEndSql));
     if ($stmt === false) {
-        $errors[] = 'Item sales SQL error: ' . print_r(sqlsrv_errors(), true);
+        $errors[] = 'Item sales data is unavailable.';
     } else {
         while ($r = sqlsrv_fetch_array($stmt, SQLSRV_FETCH_ASSOC)) {
             $qty = isset($r['Qty']) ? (float)$r['Qty'] : 0;
@@ -98,7 +103,7 @@ if ($hasReport && $startTs && $endTs) {
     ";
     $stmt = sqlsrv_query($conn, $paySql, array($periodStartSql, $periodEndSql));
     if ($stmt === false) {
-        $errors[] = 'Payment SQL error: ' . print_r(sqlsrv_errors(), true);
+        $errors[] = 'Payment data is unavailable.';
     } else {
         while ($r = sqlsrv_fetch_array($stmt, SQLSRV_FETCH_ASSOC)) {
             $name = isset($r['PaymentName']) ? $r['PaymentName'] : 'Other';
@@ -219,9 +224,15 @@ if ($hasReport && $startTs && $endTs) {
                 <div class="kx-actions">
                     <button type="submit" class="kx-btn kx-btn-primary">Show Report</button>
                     <?php if ($hasReport) { ?>
+                        <?php if ($canExportExcel) { ?>
                         <button type="button" class="kx-btn kx-btn-success" onclick="kxExportExcel('complete_sales_export','Periodic_Sales_Report')">Excel</button>
+                        <?php } ?>
+                        <?php if ($canExportPdf) { ?>
                         <button type="button" class="kx-btn kx-btn-danger" onclick="kxExportPdf('Periodic Sales Report','Periodic_Sales_Report')">PDF</button>
+                        <?php } ?>
+                        <?php if ($canExportPrint) { ?>
                         <button type="button" class="kx-btn kx-btn-dark" onclick="window.print()">Print</button>
+                        <?php } ?>
                     <?php } ?>
                 </div>
             </div>

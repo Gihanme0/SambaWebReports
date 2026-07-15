@@ -1,3 +1,7 @@
+<?php
+require_once __DIR__ . '/auth/auth.php';
+auth_require_permission('dashboard.view');
+?>
 <!DOCTYPE html>
 <html>
 <head>
@@ -14,7 +18,7 @@
 	
 </head>
 <body>
-<?php require 'config.php';?>
+<?php require_once __DIR__ . '/config.php';?>
 <?php $reportName = $BusinessName.' Reports Interface';?>
 <div class="col-md-12 top-container">
 	<fieldset>

@@ -1,3 +1,7 @@
+<?php
+require_once __DIR__ . '/auth/auth.php';
+auth_require_permission('stock.view');
+?>
 <!DOCTYPE html>
 <html>
 <head>
@@ -13,7 +17,7 @@
 	
 </head>
 <body class="PaginaStoc">
-<?php require 'config.php';?>
+<?php require_once __DIR__ . '/config.php';?>
 <?php $reportName = "Current Stock ".$BusinessName;?>
 <div class="col-md-12 top-container">
 	<fieldset>

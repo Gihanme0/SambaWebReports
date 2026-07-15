@@ -1,5 +1,7 @@
 <?php
-require 'config.php';
+require_once __DIR__ . '/auth/auth.php';
+auth_require_permission('settings.manage');
+require_once __DIR__ . '/config.php';
 
 function h($v) {
     return htmlspecialchars((string)$v, ENT_QUOTES, 'UTF-8');
@@ -28,7 +30,7 @@ function runQuery($conn, $sql, $params = []) {
 
     if ($stmt === false) {
         return [
-            'error' => print_r(sqlsrv_errors(), true),
+            'error' => 'Query could not be completed.',
             'rows' => []
         ];
     }

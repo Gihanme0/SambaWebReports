@@ -6,10 +6,18 @@
  * Date cutoff: report periods use 06:00 inclusive to next-day 06:00 exclusive; Current Balance is calculated as of now.
  * Maintenance: keep inventory formulas warehouse-keyed and verify SambaPOS movement types before changing classifications.
  */
+require_once __DIR__ . '/auth/auth.php';
+auth_require_permission('inventory_analytics.view');
+if (isset($_GET['export']) && $_GET['export'] === 'excel') {
+    auth_require_export_permission('excel');
+}
 ob_start();
-require 'config.php';
+require_once __DIR__ . '/config.php';
 $invConfigOutput = ob_get_clean();
 $reportName = "Inventory Analytics " . $BusinessName;
+$canExportExcel = auth_has_permission('exports.excel');
+$canExportPdf = auth_has_permission('exports.pdf');
+$canExportPrint = auth_has_permission('exports.print');
 
 function inv_h($value) { return htmlspecialchars((string)$value, ENT_QUOTES, 'UTF-8'); }
 function inv_num($value, $decimals = 3) { return number_format((float)$value, $decimals); }
@@ -83,7 +91,7 @@ $tableTotals = array(
 function inv_fetch_all($conn, $sql, $params = array()) {
     $stmt = sqlsrv_query($conn, $sql, $params);
     if ($stmt === false) {
-        return array('error' => print_r(sqlsrv_errors(), true), 'rows' => array());
+        return array('error' => 'Inventory data is unavailable.', 'rows' => array());
     }
     $rows = array();
     while ($row = sqlsrv_fetch_array($stmt, SQLSRV_FETCH_ASSOC)) {
@@ -950,9 +958,9 @@ if ($exportMode === 'excel') {
                 <div><span>Active filters</span><strong><?php echo number_format(count($appliedFilters)); ?> applied</strong></div>
             </div>
             <div class="inv-action-stack">
-                <a class="kx-btn kx-btn-success" href="?<?php echo inv_h(http_build_query(array_merge($_GET, array('export'=>'excel')))); ?>"><?php echo inv_icon('download-alt'); ?>Excel</a>
-                <button class="kx-btn kx-btn-danger" type="button" onclick="kxExportInventoryPdf()"><?php echo inv_icon('file'); ?>PDF</button>
-                <button class="kx-btn kx-btn-dark" type="button" onclick="window.print()"><?php echo inv_icon('print'); ?>Print</button>
+                <?php if ($canExportExcel) { ?><a class="kx-btn kx-btn-success" href="?<?php echo inv_h(http_build_query(array_merge($_GET, array('export'=>'excel')))); ?>"><?php echo inv_icon('download-alt'); ?>Excel</a><?php } ?>
+                <?php if ($canExportPdf) { ?><button class="kx-btn kx-btn-danger" type="button" onclick="kxExportInventoryPdf()"><?php echo inv_icon('file'); ?>PDF</button><?php } ?>
+                <?php if ($canExportPrint) { ?><button class="kx-btn kx-btn-dark" type="button" onclick="window.print()"><?php echo inv_icon('print'); ?>Print</button><?php } ?>
                 <a class="kx-btn kx-btn-dark" href="inventoryDaily.php"><?php echo inv_icon('refresh'); ?>Reset</a>
             </div>
         </aside>

@@ -6,10 +6,18 @@
  * Work-period cutoff: current business day uses 06:00 inclusive to next-day 06:00 exclusive.
  * Maintenance: use summary queries only; do not load full report datasets or expose raw SQL errors.
  */
+require_once __DIR__ . '/auth/auth.php';
+auth_require_permission('dashboard.view');
+if (isset($_GET['export']) && $_GET['export'] === 'excel') {
+    auth_require_export_permission('excel');
+}
 ob_start();
-require 'config.php';
+require_once __DIR__ . '/config.php';
 $dashboardConfigOutput = ob_get_clean();
 $reportName = 'Kynix Report Center Dashboard';
+$canExportExcel = auth_has_permission('exports.excel');
+$canExportPdf = auth_has_permission('exports.pdf');
+$canExportPrint = auth_has_permission('exports.print');
 
 function dash_h($value) { return htmlspecialchars((string)$value, ENT_QUOTES, 'UTF-8'); }
 function dash_money($value) { return 'Rs. ' . number_format((float)$value, 2); }
@@ -362,34 +370,34 @@ foreach ($errors as $error) { $alerts[] = $error; }
 
 $reportGroups = array(
     'Sales Reports' => array(
-        array('Daily Sales', 'Single work-period sales dashboard.', 'Modern', 'vanzari.php', 'sales'),
-        array('Periodic Sales', 'Multi-day sales performance report.', 'Modern', 'vanzariPerioada.php', 'analytics'),
-        array('Payment Summary', 'Payment totals by type.', 'In Progress', 'vanzari.php', 'payments'),
-        array('Service Charge & Discount', 'CalculationAmount-based charges and discounts.', 'In Progress', 'vanzari.php', 'reports'),
-        array('Item Sales', 'Menu item quantity and amount analysis.', 'In Progress', 'vanzari.php', 'sales'),
-        array('Group Sales', 'Sales grouped by menu category.', 'In Progress', 'vanzariPerioada.php', 'analytics')
+        array('Daily Sales', 'Single work-period sales dashboard.', 'Modern', 'vanzari.php', 'sales', 'daily_sales.view'),
+        array('Periodic Sales', 'Multi-day sales performance report.', 'Modern', 'vanzariPerioada.php', 'analytics', 'periodic_sales.view'),
+        array('Payment Summary', 'Payment totals by type.', 'In Progress', 'vanzari.php', 'payments', 'daily_sales.view'),
+        array('Service Charge & Discount', 'CalculationAmount-based charges and discounts.', 'In Progress', 'vanzari.php', 'reports', 'daily_sales.view'),
+        array('Item Sales', 'Menu item quantity and amount analysis.', 'In Progress', 'vanzari.php', 'sales', 'daily_sales.view'),
+        array('Group Sales', 'Sales grouped by menu category.', 'In Progress', 'vanzariPerioada.php', 'analytics', 'periodic_sales.view')
     ),
     'Inventory Reports' => array(
-        array('Inventory Analytics', 'Warehouse-aware inventory dashboard.', 'Modern', 'inventoryDaily.php', 'inventory'),
-        array('Current Stock', 'Legacy current stock report.', 'Legacy', 'stoc.php', 'inventory'),
-        array('Consumption', 'Legacy consumption voucher report.', 'Legacy', 'consum.php', 'inventory'),
-        array('Stock Ledger', 'Item movement ledger inside Inventory Analytics.', 'In Progress', 'inventoryDaily.php', 'reports'),
-        array('Stock Movement', 'Movement analysis by inventory transaction.', 'In Progress', 'inventoryDaily.php', 'analytics'),
-        array('Low / Negative Stock', 'Attention view for stock exceptions.', 'In Progress', 'inventoryDaily.php?showLowStock=1', 'alert')
+        array('Inventory Analytics', 'Warehouse-aware inventory dashboard.', 'Modern', 'inventoryDaily.php', 'inventory', 'inventory_analytics.view'),
+        array('Current Stock', 'Legacy current stock report.', 'Legacy', 'stoc.php', 'inventory', 'stock.view'),
+        array('Consumption', 'Legacy consumption voucher report.', 'Legacy', 'consum.php', 'inventory', 'consumption.view'),
+        array('Stock Ledger', 'Item movement ledger inside Inventory Analytics.', 'In Progress', 'inventoryDaily.php', 'reports', 'inventory_analytics.view'),
+        array('Stock Movement', 'Movement analysis by inventory transaction.', 'In Progress', 'inventoryDaily.php', 'analytics', 'inventory_analytics.view'),
+        array('Low / Negative Stock', 'Attention view for stock exceptions.', 'In Progress', 'inventoryDaily.php?showLowStock=1', 'alert', 'inventory_analytics.view')
     ),
     'Purchasing' => array(
-        array('Purchase History', 'Goods receipt and purchase history.', 'Legacy', 'nir.php', 'purchase'),
-        array('Supplier Purchases', 'Supplier-level purchasing analysis.', 'Planned', '', 'purchase'),
-        array('Purchase Returns', 'Returned purchase movement report.', 'Planned', '', 'purchase'),
-        array('GRN Summary', 'Goods receipt summary dashboard.', 'Planned', '', 'reports')
+        array('Purchase History', 'Goods receipt and purchase history.', 'Legacy', 'nir.php', 'purchase', 'purchase_history.view'),
+        array('Supplier Purchases', 'Supplier-level purchasing analysis.', 'Planned', '', 'purchase', 'purchase_history.view'),
+        array('Purchase Returns', 'Returned purchase movement report.', 'Planned', '', 'purchase', 'purchase_history.view'),
+        array('GRN Summary', 'Goods receipt summary dashboard.', 'Planned', '', 'reports', 'purchase_history.view')
     ),
     'Business Analytics' => array(
-        array('Top Selling Items', 'Today top item ranking.', 'In Progress', 'vanzari.php', 'analytics'),
-        array('Hourly Sales', 'Sales trend by hour.', 'In Progress', 'vanzari.php', 'clock'),
-        array('Payment Analysis', 'Payment mix and settlement review.', 'In Progress', 'vanzariPerioada.php', 'payments'),
-        array('Inventory Value', 'Current stock value by group.', 'In Progress', 'inventoryDaily.php', 'inventory'),
-        array('Sales vs Usage', 'Compare menu sales with recipe usage.', 'In Progress', 'inventoryDaily.php', 'analytics'),
-        array('Future Dashboard', 'Reserved for upcoming analytics.', 'Planned', '', 'reports')
+        array('Top Selling Items', 'Today top item ranking.', 'In Progress', 'vanzari.php', 'analytics', 'daily_sales.view'),
+        array('Hourly Sales', 'Sales trend by hour.', 'In Progress', 'vanzari.php', 'clock', 'daily_sales.view'),
+        array('Payment Analysis', 'Payment mix and settlement review.', 'In Progress', 'vanzariPerioada.php', 'payments', 'periodic_sales.view'),
+        array('Inventory Value', 'Current stock value by group.', 'In Progress', 'inventoryDaily.php', 'inventory', 'inventory_analytics.view'),
+        array('Sales vs Usage', 'Compare menu sales with recipe usage.', 'In Progress', 'inventoryDaily.php', 'analytics', 'inventory_analytics.view'),
+        array('Future Dashboard', 'Reserved for upcoming analytics.', 'Planned', '', 'reports', 'dashboard.view')
     )
 );
 
@@ -526,12 +534,12 @@ $maxValueGroup = 0; foreach ($valueGroupRows as $row) { if ((float)$row['StockVa
     <section class="kx-panel dash-panel">
         <div class="dash-panel-head"><div><h2>Quick Actions</h2><p><?php echo dash_h($periodLabel); ?></p></div></div>
         <div class="dash-actions">
-            <a class="kx-btn kx-btn-primary dash-track" data-report-name="Daily Sales" href="./vanzari.php"><?php echo dash_icon('sales'); ?>Open Daily Sales</a>
-            <a class="kx-btn kx-btn-dark dash-track" data-report-name="Periodic Sales" href="./vanzariPerioada.php">Open Periodic Sales</a>
-            <a class="kx-btn kx-btn-dark dash-track" data-report-name="Inventory Analytics" href="./inventoryDaily.php">Open Inventory Analytics</a>
-            <a class="kx-btn kx-btn-dark dash-track" data-report-name="Purchase History" href="./nir.php">Open Purchase History</a>
-            <button class="kx-btn kx-btn-danger" type="button" onclick="window.print()"><?php echo dash_icon('pdf'); ?>PDF / Print Summary</button>
-            <a class="kx-btn kx-btn-success" href="./index.php?export=excel"><?php echo dash_icon('excel'); ?>Export Today Summary</a>
+            <?php if (auth_has_permission('daily_sales.view')) { ?><a class="kx-btn kx-btn-primary dash-track" data-report-name="Daily Sales" href="./vanzari.php"><?php echo dash_icon('sales'); ?>Open Daily Sales</a><?php } ?>
+            <?php if (auth_has_permission('periodic_sales.view')) { ?><a class="kx-btn kx-btn-dark dash-track" data-report-name="Periodic Sales" href="./vanzariPerioada.php">Open Periodic Sales</a><?php } ?>
+            <?php if (auth_has_permission('inventory_analytics.view')) { ?><a class="kx-btn kx-btn-dark dash-track" data-report-name="Inventory Analytics" href="./inventoryDaily.php">Open Inventory Analytics</a><?php } ?>
+            <?php if (auth_has_permission('purchase_history.view')) { ?><a class="kx-btn kx-btn-dark dash-track" data-report-name="Purchase History" href="./nir.php">Open Purchase History</a><?php } ?>
+            <?php if ($canExportPdf || $canExportPrint) { ?><button class="kx-btn kx-btn-danger" type="button" onclick="window.print()"><?php echo dash_icon('pdf'); ?>PDF / Print Summary</button><?php } ?>
+            <?php if ($canExportExcel) { ?><a class="kx-btn kx-btn-success" href="./index.php?export=excel"><?php echo dash_icon('excel'); ?>Export Today Summary</a><?php } ?>
         </div>
     </section>
 
@@ -612,12 +620,12 @@ $maxValueGroup = 0; foreach ($valueGroupRows as $row) { if ((float)$row['StockVa
             <div class="kx-panel dash-panel">
                 <div class="dash-panel-head"><div><h2><?php echo dash_h($groupName); ?></h2><p>Available and planned report modules.</p></div><?php echo dash_icon('reports'); ?></div>
                 <div class="dash-report-list">
-                    <?php foreach ($reports as $report) { $statusClass = strtolower(str_replace(' ', '-', $report[2])); ?>
+                    <?php foreach ($reports as $report) { $statusClass = strtolower(str_replace(' ', '-', $report[2])); $canOpenReport = $report[3] !== '' && auth_has_permission($report[5]); ?>
                         <article class="dash-report-card">
                             <div class="dash-report-top"><div><?php echo dash_icon($report[4]); ?></div><span class="dash-badge dash-badge-<?php echo dash_h($statusClass === 'in-progress' ? 'progress' : $statusClass); ?>"><?php echo dash_h($report[2]); ?></span></div>
                             <h3><?php echo dash_h($report[0]); ?></h3>
                             <p><?php echo dash_h($report[1]); ?></p>
-                            <?php if ($report[3] !== '') { ?><a class="dash-report-action dash-track" data-report-name="<?php echo dash_h($report[0]); ?>" href="./<?php echo dash_h($report[3]); ?>">Open Report</a><?php } else { ?><span class="dash-report-action dash-report-disabled">Coming Soon</span><?php } ?>
+                            <?php if ($canOpenReport) { ?><a class="dash-report-action dash-track" data-report-name="<?php echo dash_h($report[0]); ?>" href="./<?php echo dash_h($report[3]); ?>">Open Report</a><?php } elseif ($report[3] !== '') { ?><span class="dash-report-action dash-report-disabled">Not permitted</span><?php } else { ?><span class="dash-report-action dash-report-disabled">Coming Soon</span><?php } ?>
                         </article>
                     <?php } ?>
                 </div>

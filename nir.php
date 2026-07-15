@@ -1,4 +1,7 @@
-
+<?php
+require_once __DIR__ . '/auth/auth.php';
+auth_require_permission('purchase_history.view');
+?>
 <!DOCTYPE html>
 <html>
 <head>
@@ -13,7 +16,7 @@
 	<script type="text/javascript" src="./js/bootstrap-datetimepicker.js" charset="UTF-8"></script>
 </head>
 <body class="nir">
-<?php require 'config.php';?>
+<?php require_once __DIR__ . '/config.php';?>
 <?php $reportName = "Purchase History ".$BusinessName;?>
 <div class="col-md-12 top-container">
     <form action="nir.php" class="form" method="post"  role="form">
