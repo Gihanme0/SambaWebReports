@@ -1,4 +1,9 @@
 ﻿<?php
+/*
+ * Shared Kynix report navigation.
+ * Purpose: renders the project topbar, logo, mobile menu trigger, and active report links.
+ * Maintenance: update links here when adding or renaming a report; keep labels short for mobile.
+ */
 if (!isset($reportName)) { $reportName = 'Report'; }
 $currentPage = basename($_SERVER['PHP_SELF'], '.php');
 ?>

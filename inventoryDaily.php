@@ -1,4 +1,11 @@
 ﻿<?php
+/*
+ * Inventory Analytics report.
+ * Purpose: inventory balance, movement, recipe usage, valuation, and ledger dashboard.
+ * Data sources: InventoryTransactions, Orders, MenuItemPortions, Recipes, RecipeItems, InventoryItems, and Warehouses.
+ * Date cutoff: report periods use 06:00 inclusive to next-day 06:00 exclusive; Current Balance is calculated as of now.
+ * Maintenance: keep inventory formulas warehouse-keyed and verify SambaPOS movement types before changing classifications.
+ */
 ob_start();
 require 'config.php';
 $invConfigOutput = ob_get_clean();
@@ -70,6 +77,9 @@ $tableTotals = array(
     'current_value' => 0
 );
 
+/**
+ * Execute a parameterized SQL Server query and return all rows plus a user-safe error container.
+ */
 function inv_fetch_all($conn, $sql, $params = array()) {
     $stmt = sqlsrv_query($conn, $sql, $params);
     if ($stmt === false) {

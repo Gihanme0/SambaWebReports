@@ -1,4 +1,11 @@
 <?php
+/*
+ * Daily Sales report.
+ * Purpose: one business-day Kynix dashboard for sales, payments, ticket count, service charge, discounts, and hourly sales.
+ * Data sources: Orders, MenuItems, Payments, PaymentTypes, Tickets, Calculations, and CalculationTypes.
+ * Date cutoff: SambaPOS work day is reported as 06:00 inclusive to next-day 06:00 exclusive.
+ * Maintenance: keep SQL parameterized, escape output, and verify CalculationAmount before changing financial totals.
+ */
 require 'config.php';
 $reportName = "Daily Sales " . $BusinessName;
 
@@ -22,7 +29,9 @@ $calculationRows = array();
 $hourRows = array();
 $errors = array();
 
+/** Format a report amount using the project currency prefix. */
 function kx_money($amount) { return 'Rs. ' . number_format((float)$amount, 2); }
+/** Escape dynamic report output for HTML. */
 function kx_h($value) { return htmlspecialchars((string)$value, ENT_QUOTES, 'UTF-8'); }
 function kx_payment_bucket($name) {
     $n = strtolower(trim((string)$name));

@@ -1,4 +1,11 @@
 <?php
+/*
+ * Periodic Sales report.
+ * Purpose: date-range Kynix dashboard for sales, payments, ticket count, service charge, discounts, and hourly sales.
+ * Data sources: Orders, MenuItems, Payments, PaymentTypes, Tickets, Calculations, and CalculationTypes.
+ * Date cutoff: each selected date uses the SambaPOS 06:00-to-next-day-06:00 work-period boundary.
+ * Maintenance: keep SQL parameterized, escape output, and keep Daily Sales financial rules in sync.
+ */
 require 'config.php';
 $reportName = "Periodic Sales " . $BusinessName;
 
@@ -25,7 +32,9 @@ $calculationRows = array();
 $hourRows = array();
 $errors = array();
 
+/** Format a report amount using the project currency prefix. */
 function kx_money($amount) { return 'Rs. ' . number_format((float)$amount, 2); }
+/** Escape dynamic report output for HTML. */
 function kx_h($value) { return htmlspecialchars((string)$value, ENT_QUOTES, 'UTF-8'); }
 function kx_payment_bucket($name) {
     $n = strtolower(trim((string)$name));
