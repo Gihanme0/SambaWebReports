@@ -146,5 +146,5 @@ Use these sessions to continue focused work later with ChatGPT or Codex.
 - Setup: Run `database/webreports-auth-install.sql`, then open `setup-admin.php` and create the first Super Admin.
 - Security notes: Passwords use `password_hash()`, login errors are generic, sessions regenerate after login, admin POST forms require CSRF, and direct URLs are protected server-side.
 - Known limitations: Login rate limiting/account lockout is not implemented; local `config.php` is ignored and should be manually kept aligned with the safer `config.example.php` error pattern; browser screenshot QA for admin mobile views remains pending.
-- Commit hashes: `9d13c55` schema, `6489347` auth core, `404bbdc` report protection, `df4179e` role navigation, `56bb132` admin panel.
+- Commit hashes: `9d13c55` schema, `6489347` auth core, `404bbdc` report protection, `df4179e` role navigation, `56bb132` admin panel, `2b2a71d` setup documentation.
 - Future review notes: Add login throttling if the app becomes internet-facing; add new permissions before publishing new report pages.
