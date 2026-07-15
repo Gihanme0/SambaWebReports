@@ -1,29 +1,120 @@
 # SambaWebReports
-SambaPOS Web Interface for Reports using PHP
 
-## Local configuration
-Copy `config.example.php` to `config.php` and update the SQL Server settings for your local SambaPOS database.
+SambaWebReports is a PHP reporting interface for SambaPOS running on a local WAMP/PHP/SQL Server environment. The project contains legacy Bootstrap reports and newer Kynix dashboard reports for sales, inventory, purchases, consumption, and stock.
 
-`config.php` is intentionally ignored by Git so database passwords are not pushed to GitHub.
+## Requirements
 
-# What you will need for setting this up:
-<b>1. SambaPOS3,4,5</b><br>
-You can download it from here: http://www.sambapos.com
+- SambaPOS 3, 4, or 5 database on Microsoft SQL Server.
+- WampServer or equivalent PHP/Apache stack.
+- Microsoft Drivers for PHP for SQL Server (`sqlsrv`).
+- Microsoft ODBC Driver for SQL Server.
+- Git for branch-based development.
 
-<b>2. SQL Server 2012 or later version (possible to work with lower versions too)</b><br>
-You can download it from here: https://www.microsoft.com/en-us/download/details.aspx?id=29062<br>
-Also a tutorial for migrating and installing SQL Server 2012 can be found here:<br>
-https://forum.sambapos.com/t/how-to-migrate-from-sql-compact-edition-sdf-file-to-sql-server-2012-express/752
+## Local Setup
 
-<b>3. Wamp Server</b><br>
-You can download it from here: http://www.wampserver.com/en/
+1. Clone the repository into the WAMP web root, for example:
 
-<b>4. Microsoft Drivers for PHP for SQL Server</b><br>
-You can download it from here: https://www.microsoft.com/en-us/download/details.aspx?id=20098<br>
-I used version 3.2 which is compatible with PHP 5.4 and later till PHP 7<br>
-After installing you can include the extension by adding these lines to php.ini ( in case you are using PHP 5.6 as i am):<br>
-extension=php_pdo_sqlsrv_56_ts.dll<br>
-extension=php_sqlsrv_56_ts.dll
+   ```powershell
+   C:\wamp64\www\SambaWebReports
+   ```
 
-<b>5. Microsoft® ODBC Driver 11 for SQL Server® ( this is for PHP 5.6 also )</b><br>
-You can download it from here: https://www.microsoft.com/en-us/download/details.aspx?id=36437
+2. Copy the example configuration:
+
+   ```powershell
+   copy config.example.php config.php
+   ```
+
+3. Edit `config.php` locally with your SQL Server host, database name, username, password, and business name.
+
+4. Open the reports through Apache:
+
+   ```text
+   http://localhost/SambaWebReports/
+   ```
+
+`config.php` is intentionally ignored by Git. Do not commit real database credentials.
+
+## Main Reports
+
+- `vanzari.php` - Daily Sales
+- `vanzariPerioada.php` - Periodic Sales
+- `inventoryDaily.php` - Inventory Analytics
+- `nir.php` - Purchase History / Goods Receipt Notes
+- `consum.php` - Consumption Vouchers
+- `stoc.php` - Current Stock
+- `completeSales.php` - Redirect to Periodic Sales
+
+## Folder Structure
+
+- `css/` - Kynix report styles, print styles, and datepicker styles.
+- `js/` - Report JavaScript and Bootstrap datetimepicker assets.
+- `bootstrap/` - Bundled Bootstrap 3 assets.
+- `jquery/` - Bundled jQuery.
+- `img/` - Logo and image assets.
+- `reportSQL/` - Legacy included SQL report fragments.
+- `docs/` - Development standards, workflow, database notes, testing checklists, and session documentation.
+
+## Git Workflow
+
+- Work on `feature/*`, `hotfix/*`, or another approved branch.
+- Never develop directly on `main`.
+- Pull before editing.
+- Validate before committing.
+- Use small logical commits.
+- Push stable milestones to the remote branch.
+- Use pull requests before merging to `main`.
+
+See [docs/GIT-WORKFLOW.md](docs/GIT-WORKFLOW.md).
+
+## Testing Commands
+
+Run PHP syntax checks on modified PHP files:
+
+```powershell
+php -l vanzari.php
+php -l vanzariPerioada.php
+php -l inventoryDaily.php
+php -l header.php
+```
+
+Smoke-test the main local reports:
+
+```text
+http://localhost/SambaWebReports/vanzari.php
+http://localhost/SambaWebReports/vanzariPerioada.php
+http://localhost/SambaWebReports/inventoryDaily.php
+```
+
+Use [docs/TESTING-CHECKLIST.md](docs/TESTING-CHECKLIST.md) before committing report changes.
+
+## Documentation
+
+- [Development Standards](docs/DEVELOPMENT-STANDARDS.md)
+- [Coding Guidelines](docs/CODING-GUIDELINES.md)
+- [Git Workflow](docs/GIT-WORKFLOW.md)
+- [Report Design System](docs/REPORT-DESIGN-SYSTEM.md)
+- [Database Notes](docs/DATABASE-NOTES.md)
+- [Testing Checklist](docs/TESTING-CHECKLIST.md)
+- [Project Sessions](docs/PROJECT-SESSIONS.md)
+- [Changelog](docs/CHANGELOG.md)
+- [Release Notes Template](docs/RELEASE-NOTES.md)
+
+## Security Notes
+
+- Do not commit `config.php`, `.env`, database backups, exported reports, logs, or backup PHP files.
+- Do not expose raw SQL Server credentials or private business data in documentation.
+- Avoid showing raw SQL errors in user-facing report pages.
+- Keep `config.example.php` generic.
+
+## Contribution Workflow
+
+1. Inspect the relevant report, CSS, JavaScript, SQL, and documentation.
+2. Verify SambaPOS schema/data relationships before changing report logic.
+3. Plan the smallest safe change.
+4. Modify only necessary files.
+5. Run syntax checks and local HTTP smoke tests.
+6. Review the diff.
+7. Commit with a clear prefix such as `docs:`, `fix:`, `feat:`, or `audit:`.
+8. Push to the active branch.
+
+For project-specific rules, start with [docs/DEVELOPMENT-STANDARDS.md](docs/DEVELOPMENT-STANDARDS.md).
