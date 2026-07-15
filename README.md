@@ -1,6 +1,6 @@
 # SambaWebReports
 
-SambaWebReports is a PHP reporting interface for SambaPOS running on a local WAMP/PHP/SQL Server environment. The project contains legacy Bootstrap reports and newer Kynix dashboard reports for sales, inventory, purchases, consumption, and stock.
+SambaWebReports is a PHP reporting interface for SambaPOS running on a local WAMP/PHP/SQL Server environment. The default `index.php` page is the Kynix Report Center Dashboard, with quick access to legacy Bootstrap reports and newer Kynix dashboard reports for sales, inventory, purchases, consumption, and stock.
 
 ## Requirements
 
@@ -39,6 +39,7 @@ SambaWebReports is a PHP reporting interface for SambaPOS running on a local WAM
 - `vanzari.php` - Daily Sales
 - `vanzariPerioada.php` - Periodic Sales
 - `inventoryDaily.php` - Inventory Analytics
+- `index.php` - Kynix Report Center Dashboard
 - `nir.php` - Purchase History / Goods Receipt Notes
 - `consum.php` - Consumption Vouchers
 - `stoc.php` - Current Stock

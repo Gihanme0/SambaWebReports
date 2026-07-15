@@ -9,10 +9,12 @@ This project follows a Keep-a-Changelog-style structure.
 - Development standards documentation for SambaWebReports.
 - Kynix report design system documentation.
 - Project session map for continuing work across reports.
+- Kynix Report Center Dashboard as the main `index.php` landing page.
 
 ### Changed
 
 - README expanded with setup, workflow, and testing guidance.
+- Home navigation now opens the dashboard explicitly.
 
 ### Fixed
 

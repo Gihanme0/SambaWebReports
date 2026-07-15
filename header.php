@@ -23,6 +23,7 @@ $currentPage = basename($_SERVER['PHP_SELF'], '.php');
     </button>
 
     <nav class="kx-nav" id="kxNav">
+        <a class="<?php echo ($currentPage == 'index') ? 'active' : ''; ?>" href="./index.php">Home</a>
         <a class="<?php echo ($currentPage == 'vanzariPerioada') ? 'active' : ''; ?>" href="./vanzariPerioada.php">Periodic Sales</a>
         <a class="<?php echo ($currentPage == 'vanzari') ? 'active' : ''; ?>" href="./vanzari.php">Daily Sales</a>
         <a class="<?php echo ($currentPage == 'nir') ? 'active' : ''; ?>" href="./nir.php">Purchase History</a>

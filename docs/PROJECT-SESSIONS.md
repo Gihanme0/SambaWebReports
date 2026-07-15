@@ -124,10 +124,10 @@ Use these sessions to continue focused work later with ChatGPT or Codex.
 
 ## S13 - Navigation & Report Center
 
-- Purpose: Keep report navigation clear and discoverable.
-- Current status: Shared top navigation in `header.php`.
+- Purpose: Keep report navigation clear and provide the main Kynix dashboard landing page.
+- Current status: Dashboard implemented in `index.php`; shared top navigation in `header.php`.
 - Main files: `header.php`, `index.php`, `completeSales.php`.
-- Completed work: Navigation links to major reports.
-- Pending work: Create a richer report center if requested.
+- Completed work: Report Center Dashboard with sales KPIs, inventory KPIs, alerts, insights, quick actions, grouped report cards, localStorage recent reports, Excel export, and PDF/print summary.
+- Pending work: Browser-based visual QA screenshots and deeper future report modules for planned cards.
 - Shared dependencies: Kynix topbar and logo.
-- Future review notes: Keep active state based on current page.
+- Future review notes: Keep active state based on current page, avoid broken links for planned reports, and keep dashboard queries summary-only.
